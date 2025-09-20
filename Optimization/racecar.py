@@ -3,6 +3,8 @@ from numpy import *
 import matplotlib.pyplot as plt
 import time
 
+import utils
+
 
 class SQP:
 
@@ -12,13 +14,14 @@ class SQP:
         self.T = param.get("T", 10) # Time horizon
         self.M = param.get("M", 1) # Number of discretization steps per timestep
         self.Q = param.get("Q")
+        self.q = param.get("q")
         self.R = param.get("R")
         self.N_iter = params.get("max_iter", 25) # SQP iterations per time step
 
-        self.r_fcn = None
         self.g_fcn = None
-        self.Jac_r_fcn = None
         self.Jac_g_fcn = None 
+        self.Jac_J_fcn = None
+        self.Hess_J_fcn = None
         self.solver = None
 
         self.vmin = None
@@ -82,6 +85,12 @@ class SQP:
         # Constraint function with bounds
         g = []; self.gmin = []; self.gmax = []
 
+        # Define weighting matrices for calculations
+        Q = np.asarray(self.Q)
+        q = np.asarray(self.q).reshape(-1, 1)
+        R = np.asarray(self.R)
+        J = 0
+
         # Build up a graph of integrator calls
         for k in range(self.N):
             # Call the integrator
@@ -93,14 +102,14 @@ class SQP:
             self.gmax += [0, 0, 0, 0]
 
             # Input constraints
-            self.vmin[self.nvar*k + 4 : self.nvar*k + 6] = [-5, -np.pi/5]
+            self.vmin[self.nvar*k + 4 : self.nvar*k + 6] = [-3, -np.pi/5]
             self.vmax[self.nvar*k + 4 : self.nvar*k + 6] = [ 3,  np.pi/5]
 
             # Nonlinear constraints
             th = np.deg2rad(-45)
-            R = np.array([[np.cos(th), -np.sin(th)],[np.sin(th), np.cos(th)]])
+            Rot = np.array([[np.cos(th), -np.sin(th)],[np.sin(th), np.cos(th)]])
             W = np.array([[2/5**2, 0],[0, 2/2**2]])
-            W1 = R.T @ W @ R
+            W1 = Rot.T @ W @ Rot
 
             cx = np.array([[-0.5],[0]])
             xx = xk[k][0:2] - cx
@@ -110,9 +119,9 @@ class SQP:
             self.gmax += [inf]#[0]
 
             th = np.deg2rad(30)
-            R = np.array([[np.cos(th), -np.sin(th)],[np.sin(th), np.cos(th)]])
+            Rot = np.array([[np.cos(th), -np.sin(th)],[np.sin(th), np.cos(th)]])
             W = np.array([[2/5**2, 0],[0, 2/2**2]])
-            W1 = R.T @ W @ R
+            W1 = Rot.T @ W @ Rot
 
             cx = np.array([[10],[0.5]])
             xx = xk[k][0:2] - cx
@@ -121,42 +130,31 @@ class SQP:
             self.gmin += [-inf]
             self.gmax += [inf]#[0]
 
+            J += (xk[k] - xref[:, k]).T @ (Q * (xk[k] - xref[:, k])) + uk[k].T @ (R * uk[k]) + q.T @ xk[k]
+
         # Concatenate constraints
         g = vertcat(*g)
         self.gmin = vertcat(*self.gmin)
         self.gmax = vertcat(*self.gmax)
 
-        # Gauss-Newton objective (r- residual, f = 0.5*r'r)
-        r = []
-        for k in range(self.N):
-            r.append(np.array(self.Q)*(xk[k] - xref[:, k]))   # tracking cost
-            r.append(np.array(self.R)*uk[k])              # penalize effort
-            # v0[self.nvar*k : self.nvar*k + 4] = xref[:, k]
-        r = vertcat(*r)
-
-        # Form function for calculating the Gauss-Newton objective
-        self.r_fcn = Function('r_fcn',[v, xref],[r])
-
         # Form function for calculating the constraints
         self.g_fcn = Function('g_fcn',[v],[g])
 
         # Generate functions for the Jacobians
-        self.Jac_r_fcn = Function('J_r_fcn', [v, xref], [jacobian(r, v), r])
         self.Jac_g_fcn = Function('J_g_fcn', [v], [jacobian(g, v), g])
 
         # Dummy xref
         x_ref = np.zeros((4, self.N + 1))
 
-        # Build quadratic solver
-        J_r = self.Jac_r_fcn(DM(v0), x_ref)
-        J_r_k = J_r[0]
-
         # Form quadratic approximation of constraints
         Jac_g = self.Jac_g_fcn(DM(v0))
         J_g_k = Jac_g[0]
 
-        # Gauss-Newton Hessian
-        H_k = J_r_k.T @ J_r_k
+        # Hessian/Jacobian
+        self.Jac_J_fcn = Function('J_J_fcn', [v, xref], [jacobian(J, v)])
+        self.Hess_J_fcn = Function('H_J_fcn', [v, xref], [hessian(J, v)[0]])
+
+        H_k = self.Hess_J_fcn(DM(v0), x_ref)
 
         qp = {
             'h': H_k.sparsity(),
@@ -191,7 +189,7 @@ class SQP:
             # x_ref[2,i] = (x_ref[2,i] + np.pi) % (2*np.pi) - np.pi # wrap to [-pi pi]
         for i in range(x_ref.shape[1]-1):
             x_ref[2,i] = np.atan2(x_ref[1,i+1] - x_ref[1,i], x_ref[0,i+1] - x_ref[0,i])
-            x_ref[2,-1] = x_ref[2,-2]
+        x_ref[2,-1] = x_ref[2,-2]
 
         return x_ref
 
@@ -212,25 +210,22 @@ class SQP:
         mu = DM(zeros_like(self.gmin))
         start_time = time.perf_counter()
         for k in range(self.N_iter):
-            # Form quadratic approximation of objective
-            J_r = self.Jac_r_fcn(v_opt, x_ref)
-            J_r_k = J_r[0]
-            r_k = J_r[1]
-
             # Form quadratic approximation of constraints
             Jac_g = self.Jac_g_fcn(v_opt)
             J_g_k = Jac_g[0]
             g_k = Jac_g[1]
             
             # Gauss-Newton Hessian
-            H_k = J_r_k.T @ J_r_k
+            H_k = self.Hess_J_fcn(v_opt, x_ref)
 
             # Gradient of the objective function
-            Grad_obj_k = J_r_k.T @ r_k
+            Grad_obj_k = self.Jac_J_fcn(v_opt, x_ref)
 
             # Bounds on delta_v
             dv_min = self.vmin - v_opt
             dv_max = self.vmax - v_opt
+            if isnan(dv_min).any() or (isnan(dv_max)).any() or (dv_max < dv_min).full().any():
+                print("nans found")
             
             # Solve the QP
             sol = self.solver(h=H_k, g=Grad_obj_k, a=J_g_k, lbx=dv_min, ubx=dv_max, lba=self.gmin-g_k, uba=self.gmax-g_k)
@@ -260,7 +255,7 @@ class SQP:
             # v_opt += alpha*dv
             # self.m_old = m_new
 
-        return v_opt, solved
+        return v_opt, solved, x_ref
 
 def plot_ellipse(cx, cy, W, ax=None, **kwargs):
     """
@@ -325,8 +320,6 @@ def generate_straight_trajectory(x0, dt, T):
 def get_ref(t, N, dt=0.05):
     T = t + dt * np.arange(N)
     # Heading is a placeholder as it will be recomputed
-    # TIME =  [              0,               5,             15,              25,              30,                 40,             45]
-    # TRACK = [[0, 100, 0, 10], [50, 100, 0, 10], [50, 20, 0, 8], [-30, 0, 0, 10], [-50, 0, 0, 10], [-50, 100, 0, 10], [0, 100, 0, 10]]
     TIME =  [              0,               5,             15,               25,                 35,             40]
     TRACK = [[0, 100, 0, 10], [50, 100, 0, 10], [50, 0, 0, 10],  [-50, 0, 0, 10], [-50, 100, 0, 10], [0, 100, 0, 10]]
 
@@ -351,19 +344,6 @@ def get_ref(t, N, dt=0.05):
     t = t[:, np.newaxis]  # shape: (M, 1)
 
     ref = (1 - t) * y0 + t * y1  # shape: (M, n)
-
-    # Recompute heading
-    for i in range(N-1):
-        ref[i,2] = np.atan2(ref[i+1,1] - ref[i,1], ref[i+1,0] - ref[i,0])
-    ref[-1,2] = ref[-2,2]
-
-    # Remove jumps by unwrapping
-    # for i in range(N-1):
-    #     if ref[i+1,2] - ref[i,2] < - np.pi:
-    #         ref[i+1,2] += 2*np.pi
-    #     elif ref[i+1,2] - ref[i,2] > np.pi:
-    #         ref[i+1,2] -= 2*np.pi
-    ref[:,2] = np.unwrap(ref[:,2])
 
     return ref.T
 
@@ -391,13 +371,15 @@ def sim(x, u, dt=0.05, M=1):
 params = {
     "N": 100,
     "T": 5,
-    "Q": [0.005, 0.005, 0.1, 0.001],
+    "Q": [0.001, 0.001, 10, 0.01],
+    "q": [0., 0., 0., -0.001],
     "R": [0.01, 0.001]
 }
 
 nvar = 6
 nv = 2*100 + 4*(101)
 v0 = zeros(nv)
+v0[0::6] = 0.5*(np.arange(101))
 sqp = SQP(params)
 
 start_time = time.perf_counter()
@@ -408,6 +390,9 @@ start_time = time.perf_counter()
 ################### SIMULATION #####################
 dt = 0.05
 v_opt = v0
+x1p = v_opt[0::nvar]
+x2p = v_opt[1::nvar]
+x3p = v_opt[2::nvar]
 x = np.array([[0.],[100.],[0.],[10.]])
 X = [x]
 Xr = []
@@ -418,14 +403,19 @@ U2p = []
 Xr1 = []
 Xr2 = []
 Xr3 = []
+Xr4 = []
 SOLVED = []
 U = []
-for step in range(750):
+for step in range(300):
     t = step*dt
+    print(t)
 
-    xref = get_ref(t, params["N"]+1)
+    xxref = get_ref(t, params["N"]+1)
+    xx = horzcat(x1p, x2p, x3p).T
+    xref = utils.get_ref_race(xx, params["N"]+1)
+    # print(xref[:,1:5])
 
-    v_opt, solved = sqp.solve(x, v_opt, xref)
+    v_opt, solved, x_ref = sqp.solve(x, v_opt, xref)
     # print("x=", v_opt[0:6])
     # print("r=", xref[:,0])
 
@@ -437,6 +427,7 @@ for step in range(750):
 
     x1p = v_opt[0::nvar] + x[0]
     x2p = v_opt[1::nvar] + x[1]
+    x3p = v_opt[2::nvar] + x[2]
     u1p = v_opt[4::nvar]
     u2p = v_opt[5::nvar]
 
@@ -447,7 +438,8 @@ for step in range(750):
 
     Xr1 += [xref[0,:]]
     Xr2 += [xref[1,:]]
-    Xr3 += [xref[2,:]]
+    Xr3 += [x_ref[2,:]]
+    Xr4 += [x_ref[3,:]]
 
     SOLVED += [solved]
 
@@ -472,10 +464,12 @@ U2p = np.asarray(U2p)
 Xr1 = np.asarray(Xr1)
 Xr2 = np.asarray(Xr2)
 Xr3 = np.asarray(Xr3)
+Xr4 = np.asarray(Xr4)
 
 
 x1_opt = X[:, 0]
 x2_opt = X[:, 1]
+x4_opt = X[:, 3]
 xr1 = Xr[:, 0]
 xr2 = Xr[:, 1]
 xr3 = Xr[:, 2]
@@ -485,12 +479,17 @@ u2_opt = U[:, 1]
 # print(x1_opt)
 # print(x2_opt)
 
+plt.figure(4)
+plt.plot(x4_opt)
+plt.title("speed")
+
 # Show prediction
 plt.figure(2)
-at_sample = 280
+at_sample = 90
 plt.plot(X1p[at_sample,:,0], X2p[at_sample,:,0])
 plt.plot(Xr1[at_sample,:], Xr2[at_sample,:])
 plt.grid()
+plt.title("Prediction at given sample")
 
 plt.figure(3)
 plt.subplot(211)
