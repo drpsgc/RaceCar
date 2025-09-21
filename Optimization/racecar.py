@@ -2,6 +2,7 @@ from casadi import *
 from numpy import *
 import matplotlib.pyplot as plt
 import time
+from racetrack import RaceTrack
 
 import utils
 
@@ -105,31 +106,6 @@ class SQP:
             self.vmin[self.nvar*k + 4 : self.nvar*k + 6] = [-3, -np.pi/5]
             self.vmax[self.nvar*k + 4 : self.nvar*k + 6] = [ 3,  np.pi/5]
 
-            # Nonlinear constraints
-            th = np.deg2rad(-45)
-            Rot = np.array([[np.cos(th), -np.sin(th)],[np.sin(th), np.cos(th)]])
-            W = np.array([[2/5**2, 0],[0, 2/2**2]])
-            W1 = Rot.T @ W @ Rot
-
-            cx = np.array([[-0.5],[0]])
-            xx = xk[k][0:2] - cx
-            g  += [1 - xx.T @ W1 @ xx]
-
-            self.gmin += [-inf]
-            self.gmax += [inf]#[0]
-
-            th = np.deg2rad(30)
-            Rot = np.array([[np.cos(th), -np.sin(th)],[np.sin(th), np.cos(th)]])
-            W = np.array([[2/5**2, 0],[0, 2/2**2]])
-            W1 = Rot.T @ W @ Rot
-
-            cx = np.array([[10],[0.5]])
-            xx = xk[k][0:2] - cx
-            g  += [1 - xx.T @ W1 @ xx]
-
-            self.gmin += [-inf]
-            self.gmax += [inf]#[0]
-
             J += (xk[k] - xref[:, k]).T @ (Q * (xk[k] - xref[:, k])) + uk[k].T @ (R * uk[k]) + q.T @ xk[k]
 
         # Concatenate constraints
@@ -198,12 +174,12 @@ class SQP:
     def solve(self, x, v0, xref):
         v_opt = DM(v0)
 
-        x_ref = self.transformReference(x, xref)
+        x_ref = xref# self.transformReference(x, xref)
         
         # Initial value
-        self.vmin[0] = self.vmax[0] = v0[0] = 0.#x[0]
-        self.vmin[1] = self.vmax[1] = v0[1] = 0.#x[1]
-        self.vmin[2] = self.vmax[2] = v0[2] = 0.#x[2]
+        self.vmin[0] = self.vmax[0] = v0[0] = x[0]
+        self.vmin[1] = self.vmax[1] = v0[1] = x[1]
+        self.vmin[2] = self.vmax[2] = v0[2] = x[2]
         self.vmin[3] = self.vmax[3] = v0[3] = x[3]
 
         lam = DM(zeros_like(v0))
@@ -257,96 +233,6 @@ class SQP:
 
         return v_opt, solved, x_ref
 
-def plot_ellipse(cx, cy, W, ax=None, **kwargs):
-    """
-    Plots a 2D ellipse defined by the quadratic form:
-        (x - c)^T W (x - c) = 1
-    where W is a 2x2 positive definite matrix and c = [cx, cy]
-
-    Parameters:
-    - cx, cy: center coordinates of the ellipse
-    - W: 2x2 positive definite matrix
-    - ax: optional matplotlib axes object to plot on
-    - kwargs: additional keyword arguments passed to plt.plot
-    """
-    # Check that W is 2x2
-    W = np.asarray(W)
-    if W.shape != (2, 2):
-        raise ValueError("W must be a 2x2 matrix.")
-
-    # Eigen-decomposition of W
-    eigvals, eigvecs = np.linalg.eigh(W)
-
-    if np.any(eigvals <= 0):
-        raise ValueError("Matrix W must be positive definite.")
-
-    # Get the axes lengths
-    axes_lengths = 1.0 / np.sqrt(eigvals)
-
-    # Parametrize the unit circle
-    theta = np.linspace(0, 2 * np.pi, 300)
-    circle = np.stack((np.cos(theta), np.sin(theta)))
-
-    # Transform the circle to the ellipse
-    ellipse = eigvecs @ np.diag(axes_lengths) @ circle
-    ellipse[0, :] += cx
-    ellipse[1, :] += cy
-
-    # Plot
-    if ax is None:
-        fig, ax = plt.subplots()
-
-    ax.plot(ellipse[0, :], ellipse[1, :], **kwargs)
-    ax.set_aspect('equal')
-    ax.set_title("2D Ellipse from Quadratic Form")
-
-    return ax
-
-def generate_straight_trajectory(x0, dt, T):
-    x, y, yaw, v = x0
-    N = int(T / dt) + 1
-    trajectory = np.zeros((4, N))
-    time = np.linspace(0, T, N)
-
-    for i in range(N):
-        trajectory[:,i:i+1] = np.array([[x], [y], [yaw], [v]])
-        # Update state
-        x += v * np.cos(yaw) * dt
-        y += v * np.sin(yaw) * dt
-
-    return trajectory, time
-
-
-def get_ref(t, N, dt=0.05):
-    T = t + dt * np.arange(N)
-    # Heading is a placeholder as it will be recomputed
-    TIME =  [              0,               5,             15,               25,                 35,             40]
-    TRACK = [[0, 100, 0, 10], [50, 100, 0, 10], [50, 0, 0, 10],  [-50, 0, 0, 10], [-50, 100, 0, 10], [0, 100, 0, 10]]
-
-    TIME = np.asarray(TIME)
-    TRACK = np.asarray(TRACK)
-    T = np.asarray(T)
-
-    # Ensure shapes: V1 -> (N,), V2 -> (N, n), v1_vals -> (M,)
-    assert TRACK.shape[0] == TIME.shape[0], "V2 must match V1 along first axis"
-
-    idx = np.searchsorted(TIME, T, side='right') - 1
-    idx = np.clip(idx, 0, len(TIME) - 2)
-
-    x0 = TIME[idx]
-    x1 = TIME[idx + 1]
-    t = (T - x0) / (x1 - x0)  # shape: (M,)
-
-    y0 = TRACK[idx]      # shape: (M, n)
-    y1 = TRACK[idx + 1]  # shape: (M, n)
-
-    # Broadcast t for vector interpolation
-    t = t[:, np.newaxis]  # shape: (M, 1)
-
-    ref = (1 - t) * y0 + t * y1  # shape: (M, n)
-
-    return ref.T
-
 def dyn(x, u):
     L = 3
     xdot = np.array([x[3]*cos(x[2]), x[3]*sin(x[2]), x[3]/L*tan(u[1]), u[0]])
@@ -367,13 +253,12 @@ def sim(x, u, dt=0.05, M=1):
 
 
 
-
 params = {
     "N": 100,
     "T": 5,
-    "Q": [0.001, 0.001, 10, 0.01],
-    "q": [0., 0., 0., -0.001],
-    "R": [0.01, 0.001]
+    "Q": [1., 1., 15, 0.00],
+    "q": [0., 0., 0., -2.5],
+    "R": [1, 5]
 }
 
 nvar = 6
@@ -386,14 +271,25 @@ start_time = time.perf_counter()
 
 # x_ref, ti = generate_straight_trajectory([-15, 0, 0, 4], params["T"]/params["N"], params["T"])
 
+track = RaceTrack()
 
 ################### SIMULATION #####################
 dt = 0.05
+
+
+x = np.array([[0.],[100.],[0],[10.]])
+# x = np.array([[50.],[10],[-pi/2-0.2],[10.]])
+# propagate state with assumed 0 input to obtain v0
+x0 = x.copy()
+u0 = np.zeros((2,1))
+v0[0:4] = x0.flatten()
+for k in range(1,params["N"]+1):
+    x0 = sim(x0,u0)
+    v0[6*k:6*k+4] = x0.flatten()
 v_opt = v0
 x1p = v_opt[0::nvar]
 x2p = v_opt[1::nvar]
 x3p = v_opt[2::nvar]
-x = np.array([[0.],[100.],[0.],[10.]])
 X = [x]
 Xr = []
 X1p = []
@@ -406,16 +302,25 @@ Xr3 = []
 Xr4 = []
 SOLVED = []
 U = []
-for step in range(300):
+for step in range(400):
     t = step*dt
     print(t)
 
-    xxref = get_ref(t, params["N"]+1)
     xx = horzcat(x1p, x2p, x3p).T
-    xref = utils.get_ref_race(xx, params["N"]+1)
+    t1 = time.perf_counter()
+
+    xref = utils.get_ref_race(xx, params["N"]+1, track.track)
+    t2 = time.perf_counter()
     # print(xref[:,1:5])
+    # t1 = time.perf_counter()
 
     v_opt, solved, x_ref = sqp.solve(x, v_opt, xref)
+
+    # t2 = time.perf_counter()
+
+    elapsed_time = t2 - t1
+    print("solve time: ", elapsed_time)
+
     # print("x=", v_opt[0:6])
     # print("r=", xref[:,0])
 
@@ -425,9 +330,9 @@ for step in range(300):
     U += [u]
     Xr += [xref[:,0]]
 
-    x1p = v_opt[0::nvar] + x[0]
-    x2p = v_opt[1::nvar] + x[1]
-    x3p = v_opt[2::nvar] + x[2]
+    x1p = v_opt[0::nvar] #+ x[0]
+    x2p = v_opt[1::nvar] #+ x[1]
+    x3p = v_opt[2::nvar] #+ x[2]
     u1p = v_opt[4::nvar]
     u2p = v_opt[5::nvar]
 
@@ -509,33 +414,18 @@ plt.plot(xr1, xr2)
 plt.title("Solution: Gauss-Newton SQP")
 plt.xlabel('time')
 plt.legend(['x0 trajectory','u trajectory'])
+plt.axis('equal')
 plt.grid()
 
 
 ax = plt.gca()
 
-th = np.deg2rad(-45)
-R = np.array([[np.cos(th), -np.sin(th)],[np.sin(th), np.cos(th)]])
-W = np.array([[2/5**2, 0],[0, 2/2**2]])
-W1 = R.T @ W @ R
-cx = np.array([[-0.5],[0]])
-
-plot_ellipse(cx[0], cx[1], W1, ax)
-
-th = np.deg2rad(30)
-R = np.array([[np.cos(th), -np.sin(th)],[np.sin(th), np.cos(th)]])
-W = np.array([[2/5**2, 0],[0, 2/2**2]])
-W1 = R.T @ W @ R
-cx = np.array([[10],[0.5]])
-
-plot_ellipse(cx[0], cx[1], W1, ax)
-
 T = 10
 N = 100
 plt.subplot(212)
 plt.title("SQP solver output")
-plt.step(u1_opt,'-.')
-plt.step(u2_opt,'-.')
+plt.plot(u1_opt)
+plt.plot(u2_opt)
 plt.xlabel('iteration')
 plt.grid()
 

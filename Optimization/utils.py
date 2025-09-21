@@ -75,11 +75,15 @@ def proj_to_path(x, path):
     # Find closest index
     dmin = 1e10
     idx = 0
-    for i in range(N):
-        d = np.linalg.norm(path[i, 0:2] - x[0:2]) 
+    i=0
+    while i < N:
+        d = np.linalg.norm(path[i, 0:2] - x[0:2])
+        if d > 10:
+            i+=20
         if d < dmin:
             dmin = d
             idx = i
+        i+=1
     
     # Find second closest
     # d_pre = 1e10 if idx < 1 else np.linalg.norm(path[idx-1, 0:2] - x[0:2])
@@ -93,6 +97,7 @@ def proj_to_path(x, path):
     else:
         p1 = path[idx, 0:2]
         p2 = path[idx+1, 0:2]
+        idx = idx+1
 
     v1 = p2 - p1
     v2 = (x[0:2] - p1).full()
@@ -101,7 +106,8 @@ def proj_to_path(x, path):
     proj = (v1.T @ v2) / norm_v1
     proj = max(min(proj, norm_v1),0)
     
-    return p1 + proj*v1/norm_v1
+    return p1 + proj*v1/norm_v1, idx
+    # return p2, idx
 
 def next_path_point(x, path):
     """ 
@@ -135,20 +141,21 @@ def next_path_point(x, path):
     
     return p2
 
-def get_ref_race(X, N):
+def get_ref_race(X, N, TRACK):
 
     # Heading is a placeholder as it will be recomputed
     # TRACK = [[0, 100, 0, 10], [50, 100, 0, 10], [50, 5, 0, 10], [49.5, 4, 0,10], [47, 2, 0, 10], [46, 0, 0, 10],[45, 0, 0, 10],  [-50, 0, 0, 10], [-50, 100, 0, 10], [0, 100, 0, 10]]
-    TRACK = [[0, 100, 0, 10], [50, 100, 0, 10],[50, 0, 0, 10],  [-50, 0, 0, 10], [-50, 100, 0, 10], [0, 100, 0, 10]]
+    # TRACK = [[0, 100, 0, 10], [50, 100, 0, 10],[50, 0, 0, 10],  [-50, 0, 0, 10], [-50, 100, 0, 10], [0, 100, 0, 10]]
     # TRACK = [[0, 100, 0, 10], [20, 90, 0, 10],[60, 110, 0, 10],  [20, 90, 0, 10], [60, 110, 0, 10], [0, 100, 0, 10]]
-    TRACK = np.asarray(TRACK)
+    # TRACK = np.asarray(TRACK)
 
     N = X.shape[1]
     ref = np.zeros((4,N))
     for i in range(N):
         # Propagate state
         x = X[:,i]# + ca.vertcat(0.1*np.cos(X[2,i]), 0.1*np.sin(X[2,i]),0)
-        ref[0:2, i] = proj_to_path(x, TRACK)
+        ref[0:2, i],idx = proj_to_path(x, TRACK)
+        ref[2, i] = TRACK[idx,2]
         # ref[0:2, i] = next_path_point(X[:, i], TRACK)
     ref[3,:] = 10
 
