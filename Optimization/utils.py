@@ -151,12 +151,13 @@ def get_ref_race(X, N, TRACK):
     # TRACK = np.asarray(TRACK)
 
     N = X.shape[1]
-    ref = np.zeros((4,N))
+    ref = np.zeros((5,N))
     for i in range(N):
         # Propagate state
         x = X[:,i]# + ca.vertcat(0.1*np.cos(X[2,i]), 0.1*np.sin(X[2,i]),0)
         ref[0:2, i],idx = proj_to_path(x, TRACK)
         ref[2, i] = TRACK[idx,2]
+        ref[4, i] = TRACK[idx,3]
         # ref[0:2, i] = next_path_point(X[:, i], TRACK)
     ref[3,:] = 10
 

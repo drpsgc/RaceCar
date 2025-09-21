@@ -15,56 +15,61 @@ class RaceTrack:
         x  = 0
         y  = 100
         th = 0
-        X  = [[x,y,th]]
+        k = 0
+        X  = [[x,y,th,k]]
 
         # straight
         for i in range(60):
             x += 0.5*np.cos(th)
             y += 0.5*np.sin(th)
             th += 0
-            X  += [[x,y,th]]
+            k = 0
+            X  += [[x,y,th, k]]
         
         k = -1/20 # curvature
         for i in range(63):
             th += 0.5*k
             x += 0.5*np.cos(th)
             y += 0.5*np.sin(th)
-            X  += [[x,y,th]]
+            X  += [[x,y,th,k]]
         
         # straight
         for i in range(120):
             x += 0.5*np.cos(th)
             y += 0.5*np.sin(th)
             th += 0
-            X  += [[x,y,th]]
+            k = 0
+            X  += [[x,y,th,k]]
         
         k = -1/20 # curvature
         for i in range(63):
             th += 0.5*k
             x += 0.5*np.cos(th)
             y += 0.5*np.sin(th)
-            X  += [[x,y,th]]
+            X  += [[x,y,th,k]]
         
         # straight
         for i in range(120):
             x += 0.5*np.cos(th)
             y += 0.5*np.sin(th)
             th += 0
-            X  += [[x,y,th]]
+            k = 0
+            X  += [[x,y,th, k]]
 
         k = -1/20 # curvature
         for i in range(63):
             th += 0.5*k
             x += 0.5*np.cos(th)
             y += 0.5*np.sin(th)
-            X  += [[x,y,th]]
+            X  += [[x,y,th, k]]
 
         # straight
         for i in range(120):
             x += 0.5*np.cos(th)
             y += 0.5*np.sin(th)
             th += 0
-            X  += [[x,y,th]]
+            k = 0
+            X  += [[x,y,th,k]]
         
         return np.asarray(X)
     

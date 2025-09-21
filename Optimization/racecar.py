@@ -67,7 +67,7 @@ class SQP:
 
         # Formulate NLP (use matrix graph)
         v = SX.sym("v", self.nv)
-        xref = SX.sym("x0", 4, self.N + 1)
+        xref = SX.sym("x0", 5, self.N + 1)
 
         # Get the state for each shooting interval
         xk = [v[self.nvar*k : self.nvar*k + 4] for k in range(self.N+1)]
@@ -106,7 +106,20 @@ class SQP:
             self.vmin[self.nvar*k + 4 : self.nvar*k + 6] = [-3, -np.pi/5]
             self.vmax[self.nvar*k + 4 : self.nvar*k + 6] = [ 3,  np.pi/5]
 
-            J += (xk[k] - xref[:, k]).T @ (Q * (xk[k] - xref[:, k])) + uk[k].T @ (R * uk[k]) + q[3] * xk[k][3]*cos(xk[k][2] - xref[2,k])
+            # State constraints
+            # max speed
+            # self.vmax[self.nvar*k + 2] = 30
+            # g.append( xk[k][3]**2*xref[4,k])
+            g.append( xk[k][3]**2*(1/L*tan(uk[k][1])))
+            self.gmin += [-inf]
+            self.gmax += [3]
+
+            # Lateral distance
+            g.append( (xk[k][0] - xref[0,k])*sin(xref[2,k]) - (xk[k][1] - xref[1,k])*cos(xref[2,k]))
+            self.gmin += [-3]
+            self.gmax += [3]
+
+            J += (xk[k] - xref[0:4, k]).T @ (Q * (xk[k] - xref[0:4, k])) + uk[k].T @ (R * uk[k]) + q[3] * xk[k][3]*cos(xk[k][2] - xref[2,k])
 
         # Concatenate constraints
         g = vertcat(*g)
@@ -114,16 +127,16 @@ class SQP:
         self.gmax = vertcat(*self.gmax)
 
         # Form function for calculating the constraints
-        self.g_fcn = Function('g_fcn',[v],[g])
+        self.g_fcn = Function('g_fcn',[v, xref],[g])
 
         # Generate functions for the Jacobians
-        self.Jac_g_fcn = Function('J_g_fcn', [v], [jacobian(g, v), g])
+        self.Jac_g_fcn = Function('J_g_fcn', [v, xref], [jacobian(g, v), g])
 
         # Dummy xref
-        x_ref = np.zeros((4, self.N + 1))
+        x_ref = np.zeros((5, self.N + 1))
 
         # Form quadratic approximation of constraints
-        Jac_g = self.Jac_g_fcn(DM(v0))
+        Jac_g = self.Jac_g_fcn(DM(v0), x_ref)
         J_g_k = Jac_g[0]
 
         # Hessian/Jacobian
@@ -187,7 +200,7 @@ class SQP:
         start_time = time.perf_counter()
         for k in range(self.N_iter):
             # Form quadratic approximation of constraints
-            Jac_g = self.Jac_g_fcn(v_opt)
+            Jac_g = self.Jac_g_fcn(v_opt, x_ref)
             J_g_k = Jac_g[0]
             g_k = Jac_g[1]
             
@@ -256,9 +269,9 @@ def sim(x, u, dt=0.05, M=1):
 params = {
     "N": 100,
     "T": 5,
-    "Q": [1., 1., 15, 0.00],
-    "q": [0., 0., 0., -3.],
-    "R": [1, 5]
+    "Q": [0.5, 0.5, 0.1, 0.00],
+    "q": [0., 0., 0., -1.5],
+    "R": [1, 10]
 }
 
 nvar = 6
@@ -302,7 +315,7 @@ Xr3 = []
 Xr4 = []
 SOLVED = []
 U = []
-for step in range(800):
+for step in range(300):
     t = step*dt
     print(t)
 
