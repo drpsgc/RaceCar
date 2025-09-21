@@ -106,7 +106,7 @@ class SQP:
             self.vmin[self.nvar*k + 4 : self.nvar*k + 6] = [-3, -np.pi/5]
             self.vmax[self.nvar*k + 4 : self.nvar*k + 6] = [ 3,  np.pi/5]
 
-            J += (xk[k] - xref[:, k]).T @ (Q * (xk[k] - xref[:, k])) + uk[k].T @ (R * uk[k]) + q.T @ xk[k]
+            J += (xk[k] - xref[:, k]).T @ (Q * (xk[k] - xref[:, k])) + uk[k].T @ (R * uk[k]) + q[3] * xk[k][3]*cos(xk[k][2] - xref[2,k])
 
         # Concatenate constraints
         g = vertcat(*g)
@@ -257,7 +257,7 @@ params = {
     "N": 100,
     "T": 5,
     "Q": [1., 1., 15, 0.00],
-    "q": [0., 0., 0., -2.5],
+    "q": [0., 0., 0., -3.],
     "R": [1, 5]
 }
 
@@ -302,7 +302,7 @@ Xr3 = []
 Xr4 = []
 SOLVED = []
 U = []
-for step in range(400):
+for step in range(800):
     t = step*dt
     print(t)
 

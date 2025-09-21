@@ -80,6 +80,7 @@ def proj_to_path(x, path):
         d = np.linalg.norm(path[i, 0:2] - x[0:2])
         if d > 10:
             i+=20
+            continue
         if d < dmin:
             dmin = d
             idx = i
