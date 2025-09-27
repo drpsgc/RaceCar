@@ -66,32 +66,35 @@ def signed_distance_to_line(p, p1, p2):
         sign = 1 if signed_area >= 0 else 1
         return sign * euclidean_dist
 
-def proj_to_path(x, path):
+def proj_to_path(x, path, idx0):
     """ 
     Find the closest path sample to x
     """
     N = path.shape[0]
 
     # Find closest index
-    dmin = 1e10
-    idx = 0
-    i=0
-    while i < N:
-        d = np.linalg.norm(path[i, 0:2] - x[0:2])
-        if d > 10:
-            i+=20
-            continue
-        if d < dmin:
-            dmin = d
-            idx = i
-        i+=1
+    # dmin = 1e10
+    # idx = 0
+    # i=idx0
+    # while i < N:
+    #     d = np.linalg.norm(path[i, 0:2] - x[0:2])
+    #     if d > 10:
+    #         i+=20
+    #         continue
+    #     if d < dmin:
+    #         dmin = d
+    #         idx = i
+    #     i+=1
+    deltas = (path[idx0:, 0:2].T - x[0:2]).T  # shape: (N, 2)
+    dist_squared = np.einsum('ij,ij->i', deltas, deltas)  # Fast dot product row-wise
+    idx = np.argmin(dist_squared) + idx0
     
     # Find second closest
     # d_pre = 1e10 if idx < 1 else np.linalg.norm(path[idx-1, 0:2] - x[0:2])
     # d_post = 1e10 if idx > N-1 else np.linalg.norm(path[idx-1, 0:2] - x[0:2])
-    d_pre = 1e10 if idx < 1 else signed_distance_to_line(x[0:2], path[idx-1, 0:2], path[idx, 0:2])
-    d_post = 1e10 if idx >= N-1 else signed_distance_to_line(x[0:2], path[idx, 0:2], path[idx+1, 0:2])
-
+    d_pre = 1e20 if idx < 1 else signed_distance_to_line(x[0:2], path[idx-1, 0:2], path[idx, 0:2])
+    d_post = 1e20 if idx >= N-1 else signed_distance_to_line(x[0:2], path[idx, 0:2], path[idx+1, 0:2])
+    
     if d_pre < d_post:
         p1 = path[idx-1, 0:2]
         p2 = path[idx, 0:2]
@@ -144,12 +147,6 @@ def next_path_point(x, path):
 
 def get_ref_race(X, N, TRACK):
 
-    # Heading is a placeholder as it will be recomputed
-    # TRACK = [[0, 100, 0, 10], [50, 100, 0, 10], [50, 5, 0, 10], [49.5, 4, 0,10], [47, 2, 0, 10], [46, 0, 0, 10],[45, 0, 0, 10],  [-50, 0, 0, 10], [-50, 100, 0, 10], [0, 100, 0, 10]]
-    # TRACK = [[0, 100, 0, 10], [50, 100, 0, 10],[50, 0, 0, 10],  [-50, 0, 0, 10], [-50, 100, 0, 10], [0, 100, 0, 10]]
-    # TRACK = [[0, 100, 0, 10], [20, 90, 0, 10],[60, 110, 0, 10],  [20, 90, 0, 10], [60, 110, 0, 10], [0, 100, 0, 10]]
-    # TRACK = np.asarray(TRACK)
-
     N = X.shape[1]
     ref = np.zeros((5,N))
     for i in range(N):
@@ -163,7 +160,35 @@ def get_ref_race(X, N, TRACK):
 
     return ref
 
+def get_ref_race_frenet(X, N, TRACK, idx0):
 
+    N = X.shape[1]
+    ref = np.zeros((5,N))
+    for i in range(N):
+        # Propagate state
+        x = X[:,i]# + ca.vertcat(0.1*np.cos(X[2,i]), 0.1*np.sin(X[2,i]),0)
+        ref[0:2, i],idx = proj_to_path(x, TRACK, idx0)
+        ref[2, i] = TRACK[idx,2]# if abs(TRACK[idx,2] - x[2]) < abs(TRACK[idx,2] + 2*np.pi - x[2]) else TRACK[idx,2] + 2*np.pi   
+        ref[4, i] = TRACK[idx,3]
+        idx0 = idx # start search from current
+        # ref[0:2, i] = next_path_point(X[:, i], TRACK)
+    ref[3,:] = 10
+
+    return ref
+
+def draw_track(track, w):
+    left = np.zeros((track.shape[0],2))
+    right = np.zeros((track.shape[0],2))
+    for i in range(track.shape[0]):
+        normal = np.array([np.cos(track[i,2]+np.pi/2) , np.sin(track[i,2]+np.pi/2)])
+        left[i,:] = track[i,0:2] + w/2*normal
+        right[i,:] = track[i,0:2] - w/2*normal
+    
+    plt.plot(track[:,0], track[:,1])
+    plt.plot(left[:,0], left[:,1], 'r--')
+    plt.plot(right[:,0], right[:,1],'r--')
+    
+    
 
 # path = np.asarray([[0,0],[1,0],[2,0],[3,0], [3,1],[3,2],[3,3]])
 # # x=np.asarray([1.51,1])
