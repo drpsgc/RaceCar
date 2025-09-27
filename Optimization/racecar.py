@@ -40,8 +40,8 @@ params = {
     "N": 100,
     "T": 5,
     "Q": [0., 0.0, 0.00, 0.],
-    "q": [0., 0., 0., -0.5],
-    "R": [1, 500],
+    "q": [0., 0., 0., -1.0],
+    "R": [1, 200],
     "max_iter": 1
 }
 
@@ -93,7 +93,13 @@ SOLVED = []
 U = []
 Alat = []
 idx0 = 0
-for step in range(600):
+
+fig, ax = plt.subplots()
+ax.set_aspect('equal')
+vehicle_artist = None
+trajectory_artist = None
+utils.draw_track(track.track, 6)
+for step in range(950):
     t = step*dt
     print(t)
     if step == 269: # check 268 rollout doesnt seem to change speed even when accel is -3
@@ -155,6 +161,10 @@ for step in range(600):
     Xr4 += [x_ref[3,:]]
 
     SOLVED += [solved]
+
+    vehicle_artist, trajectory_artist = utils.draw_vehicle_and_trajectory(ax, x[0], x[1], x[2], Xp, vehicle_artist=vehicle_artist, trajectory_artist=trajectory_artist)
+
+    plt.pause(0.01)  # brief pause for animation
 
 
 end_time = time.perf_counter()
@@ -234,7 +244,7 @@ plt.title("Solution: Gauss-Newton SQP")
 plt.xlabel('time')
 plt.legend(['x0 trajectory','u trajectory'])
 plt.axis('equal')
-plt.xlim(-60, 60)  # Set x-axis limits from 0 to 5
+plt.xlim(-80, 100)  # Set x-axis limits from 0 to 5
 plt.ylim(-5, 105) # Set y-axis limits from -1.5 to 1.5
 plt.grid()
 

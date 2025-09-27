@@ -188,7 +188,64 @@ def draw_track(track, w):
     plt.plot(left[:,0], left[:,1], 'r--')
     plt.plot(right[:,0], right[:,1],'r--')
     
-    
+
+from matplotlib.patches import Rectangle
+from matplotlib.transforms import Affine2D
+
+def draw_vehicle_and_trajectory(ax, x, y, heading, future_states,
+                                vehicle_artist=None, trajectory_artist=None,
+                                L=4.5, W=2.0):
+    """
+    Draw or update a vehicle rectangle and trajectory line.
+
+    Parameters:
+    - ax: matplotlib Axes
+    - x, y, heading: rear axle position and heading in radians
+    - future_states: np.array shape (3, N) of future x, y, heading
+    - vehicle_artist: existing rectangle (for reuse)
+    - trajectory_artist: existing line (for reuse)
+    - L, W: length and width of vehicle
+
+    Returns:
+    - Updated vehicle_artist and trajectory_artist
+    """
+
+    # Compute center of rectangle (vehicle center is forward from rear axle)
+    rear_to_center = L / 2
+    cx = x + rear_to_center * np.cos(heading)
+    cy = y + rear_to_center * np.sin(heading)
+
+    # Define transform for rotation + translation around center
+    transform = Affine2D().rotate_around(cx, cy, heading)
+
+    # Bottom-left corner before rotation (centered rectangle)
+    bl_x = cx - L / 2
+    bl_y = cy - W / 2
+
+    if vehicle_artist is None:
+        # Create the rectangle at (bl_x, bl_y) with identity transform
+        vehicle_artist = Rectangle((bl_x, bl_y), L, W,
+                                   facecolor='blue', edgecolor='black', alpha=0.8,
+                                   transform=transform + ax.transData,
+                                   zorder=10)
+        ax.add_patch(vehicle_artist)
+    else:
+        # Update position and transform
+        vehicle_artist.set_xy((bl_x, bl_y))
+        vehicle_artist.set_transform(transform + ax.transData)
+
+    # Update trajectory
+    traj_x = future_states[0, :]
+    traj_y = future_states[1, :]
+
+    if trajectory_artist is None:
+        trajectory_artist, = ax.plot(traj_x, traj_y, linewidth=1.5, zorder=5)
+    else:
+        trajectory_artist.set_data(traj_x, traj_y)
+
+    return vehicle_artist, trajectory_artist
+
+
 
 # path = np.asarray([[0,0],[1,0],[2,0],[3,0], [3,1],[3,2],[3,3]])
 # # x=np.asarray([1.51,1])
