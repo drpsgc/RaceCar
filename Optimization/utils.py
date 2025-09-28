@@ -246,7 +246,21 @@ def draw_vehicle_and_trajectory(ax, x, y, heading, future_states,
     return vehicle_artist, trajectory_artist
 
 
+class SGolay:
+    def __init__(self, m, w):
 
+        z = np.arange(-(w-1)/2, (w-1)/2+1)
+
+        JT = np.ones((m+1, w))
+        for i in range(m+1):
+            JT[i,:] = z**i
+        a = np.linalg.solve(JT @ JT.T, JT)
+
+        # final filter coesfficients
+        self.c = a[0,:]
+
+    def smooth(self, x):
+        return np.array([np.convolve(xi, self.c, mode='same') for xi in x])
 # path = np.asarray([[0,0],[1,0],[2,0],[3,0], [3,1],[3,2],[3,3]])
 # # x=np.asarray([1.51,1])
 # # x = ca.DM([1.51,1])

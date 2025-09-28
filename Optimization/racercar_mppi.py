@@ -1,9 +1,18 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Sat Sep 27 10:53:35 2025
+
+@author: psgc
+"""
+
 from casadi import *
 from numpy import *
 import matplotlib.pyplot as plt
 import time
 from racetrack import RaceTrack
-from SQP import SQP
+from MPPI import MPPI
+from numba import jit
 
 import utils
 
@@ -12,6 +21,52 @@ def dyn(x, u):
     L = 3
     xdot = np.array([x[3]*cos(x[2]), x[3]*sin(x[2]), x[3]/L*tan(u[1]), u[0]])
     return xdot
+
+@jit(nopython=True)
+def f_continuous(x, u, curv):
+    L=3
+    v  = x[3][0]
+    d  = x[1][0]
+    th = x[2][0]
+    ph = u[1][0]
+    a  = u[0][0]
+    xdot = np.array([[v*cos(th)/(1-d*curv)], 
+                     [v*sin(th)], 
+                     [v/L*tan(ph) - (v*curv*cos(th))/(1-d*curv)],
+                     [a]])
+    
+    return xdot
+
+@jit(nopython=True)
+def cost(x, u, r):
+    return 0.0*(x[1] - r[1])**2 + u.T @ u - 10*x[0]
+
+@jit(nopython=True)
+def constraints(x, u, curv):
+
+    L = 3
+    
+    # max lateral deviation
+    q1 = 100
+    q2 = 10
+    f1 = abs(x[1]) - 3
+    c1 = q1*exp(q2*f1)
+    
+    # # max lateral acceleration
+    # q1 = 100
+    # q2 = 10
+    # # f2 = abs((tan(u[1])/L)*x[3]**2) - 3
+    # f2 = abs(curv*x[3]**2) - 3
+    # c2 = q1*exp(q2*f2) if f2 > 0 else 0*f2
+    
+    # f1 = abs(x[1]) - 3
+    # c1 = 100.*np.maximum(f1,0*f1)
+    
+    # f2 = abs((tan(u[1])/L)*x[3]**2) - 3
+    f2 = abs(curv*x[3]**2) - 3
+    c2 = 100.*np.maximum(f2,0*f2)
+    
+    return c1 + c2
 
 def sim(x, u, dt=0.05, M=1):
     # RK4 with M steps
@@ -37,8 +92,8 @@ def rollout(x0, U, dt):
 
 
 params = {
-    "N": 50,
-    "T": 5,
+    "N": 40,
+    "T": 4,
     "Q": [0., 0.0, 0.00, 0.],
     "q": [0., 0., 0., -1.0],
     "R": [1, 200],
@@ -46,10 +101,12 @@ params = {
 }
 
 nvar = 6
-nv = 2*params["N"] + 4*(params["N"]+1)
+nv = 2*100 + 4*(101)
 v0 = zeros(nv)
-v0[0::6] = 0.5*(np.arange(params["N"]+1))
-sqp = SQP(params)
+v0[0::6] = 0.5*(np.arange(101))
+
+# CREATE SOLVER
+mppi = MPPI(f_continuous, cost, constraints)
 
 start_time = time.perf_counter()
 
@@ -97,7 +154,6 @@ ax.set_aspect('equal')
 vehicle_artist = None
 trajectory_artist = None
 utils.draw_track(track.track, 6)
-# for step in range(950):
 for step in range(475):
     t = step*dt
     print(t)
@@ -110,16 +166,23 @@ for step in range(475):
     # print(xref[:,1:5])
     # t1 = time.perf_counter()
 
-    v_opt, solved, x_ref = sqp.solve(x, v_opt, xref)
+    # Calculate state and ref in frenet frame
+    x_frenet = x.copy()    
+    dth = x[2] - xref[2,0]
+    x_frenet[0] = 0
+    x_frenet[1] = -(x[0] - xref[0,0])*sin(xref[2,0]) + (x[1] - xref[1,0])*cos(xref[2,0])
+    x_frenet[2] = dth
+    x_ref = xref.copy()
+    x_ref[0:2,:] = 0
+        
+    u, up, Xpf = mppi.solve(x_frenet, x_ref)
     
-    # Have to modify this by converting from prediction to x,y or rolling out input
-    # x1p = v_opt[0::nvar] #+ x[0]
-    # x2p = v_opt[1::nvar] #+ x[1]
-    # x3p = v_opt[2::nvar] #+ x[2]
-    u1p = v_opt[4::nvar]
-    u2p = v_opt[5::nvar]
-    up = np.array(horzcat(u1p, u2p).T)
+    u1p = up[0,:]
+    u2p = up[1,:]
+    
+    # ROLLOUT dynamics for prediction in cartesian space
     Xp = rollout(x, up, dt)
+    
     x1p = Xp[0,:] #+ x[0]
     x2p = Xp[1,:] #+ x[1]
     x3p = Xp[2,:] #+ x[2]
@@ -130,12 +193,14 @@ for step in range(475):
     elapsed_time = t2 - t1
     print("solve time: ", elapsed_time)
 
-    xf += [v_opt[0:4]]
-    u = np.array(v_opt[4:6])
+    xf += [Xpf[0:4,0]]
+
     a_lat = x[3]**2*( 1/L*tan(u[1]))
     Alat += [a_lat]
     
+    # SIMULATION
     x = sim(x, u, dt)
+    
     X += [x]
     U += [u]
     Xr += [xref[:,0]]
@@ -147,10 +212,10 @@ for step in range(475):
 
     Xr1 += [xref[0,:]]
     Xr2 += [xref[1,:]]
-    Xr3 += [x_ref[2,:]]
-    Xr4 += [x_ref[3,:]]
+    # Xr3 += [x_ref[2,:]]
+    # Xr4 += [x_ref[3,:]]
 
-    SOLVED += [solved]
+    # SOLVED += [solved]
 
     vehicle_artist, trajectory_artist = utils.draw_vehicle_and_trajectory(ax, x[0], x[1], x[2], Xp, vehicle_artist=vehicle_artist, trajectory_artist=trajectory_artist)
 
@@ -171,10 +236,10 @@ Xr = np.asarray(Xr)
 X1p = np.asarray(X1p)
 X2p = np.asarray(X2p)
 U2p = np.asarray(U2p)
-Xr1 = np.asarray(Xr1)
-Xr2 = np.asarray(Xr2)
-Xr3 = np.asarray(Xr3)
-Xr4 = np.asarray(Xr4)
+# Xr1 = np.asarray(Xr1)
+# Xr2 = np.asarray(Xr2)
+# Xr3 = np.asarray(Xr3)
+# Xr4 = np.asarray(Xr4)
 xf = np.asarray(xf)
 Alat = np.asarray(Alat)
 
@@ -197,14 +262,14 @@ plt.plot(x4_opt)
 plt.title("speed")
 
 # Show prediction
-plt.figure(2)
-at_sample = 5
-# plt.plot(X1p[at_sample,:,0], X2p[at_sample,:,0])
-# plt.plot(Xr1[at_sample,:], Xr2[at_sample,:])
-plt.plot(X2p[at_sample,:])
-plt.plot(Xr2[at_sample,:])
-plt.grid()
-plt.title("Prediction at given sample")
+# plt.figure(2)
+# at_sample = 5
+# # plt.plot(X1p[at_sample,:,0], X2p[at_sample,:,0])
+# # plt.plot(Xr1[at_sample,:], Xr2[at_sample,:])
+# plt.plot(X2p[at_sample,:])
+# plt.plot(Xr2[at_sample,:])
+# plt.grid()
+# plt.title("Prediction at given sample")
 
 plt.figure(3)
 ax = plt.subplot(211)

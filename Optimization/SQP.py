@@ -130,17 +130,10 @@ class SQP:
             # max speed
             self.vmax[self.nvar*k + 3] =  20
 
-            # g.append( xk[k][3]**2*xref[4,k])
-            # g.append( xk[k][3]**2*(1/L*tan(uk[k][1])) )
             # maximum lateral acceleration
             g.append( (tan(uk[k][1])/L)*xk[k][3]**2 )
             self.gmin += [-3]
             self.gmax += [3]
-
-            # Lateral distance
-            # g.append( (xk[k][0] - xref[0,k])*sin(xref[2,k]) - (xk[k][1] - xref[1,k])*cos(xref[2,k]))
-            # self.gmin += [-3]
-            # self.gmax += [3]
 
             J += (xk[k] - xref[0:4, k]).T @ (Q * (xk[k] - xref[0:4, k])) + uk[k].T @ (R * uk[k]) + q[3] * xk[k][0]#xk[k][3]*cos(xk[k][2] - xref[2,k])
 
@@ -187,7 +180,7 @@ class SQP:
     def solve(self, x_c, v0, xref):
         v_opt = DM(v0)
 
-        # calculate state in frenet frame
+        # calculate state in frenet frame [s, d, th-th_path, v]
         x = x_c.copy()
         dth = x_c[2] - xref[2,0]
         x[0] = 0
