@@ -25,15 +25,17 @@ def dyn(x, u):
 @jit(nopython=True)
 def f_continuous(x, u, curv):
     L=3
-    v  = x[3][0]
-    d  = x[1][0]
-    th = x[2][0]
-    ph = u[1][0]
-    a  = u[0][0]
+    v   = x[3][0]
+    ph  = x[4][0]
+    d   = x[1][0]
+    th  = x[2][0]
+    dph = u[1][0]
+    a   = u[0][0]
     xdot = np.array([[v*cos(th)/(1-d*curv)], 
                      [v*sin(th)], 
                      [v/L*tan(ph) - (v*curv*cos(th))/(1-d*curv)],
-                     [a]])
+                     [a],
+                     [dph]])
     
     return xdot
 
@@ -45,28 +47,34 @@ def cost(x, u, r):
 def constraints(x, u, curv):
 
     L = 3
-    
+
     # max lateral deviation
     q1 = 100
     q2 = 10
     f1 = abs(x[1]) - 3
     c1 = q1*exp(q2*f1)
-    
+
     # # max lateral acceleration
     # q1 = 100
     # q2 = 10
     # # f2 = abs((tan(u[1])/L)*x[3]**2) - 3
     # f2 = abs(curv*x[3]**2) - 3
     # c2 = q1*exp(q2*f2) if f2 > 0 else 0*f2
-    
+
     # f1 = abs(x[1]) - 3
     # c1 = 100.*np.maximum(f1,0*f1)
-    
-    # f2 = abs((tan(u[1])/L)*x[3]**2) - 3
-    f2 = abs(curv*x[3]**2) - 3
-    c2 = 100.*np.maximum(f2,0*f2)
-    
-    return c1 + c2
+
+    # f2 = abs((tan(x[4])/L)*x[3]**2) - 3
+    f2 = abs(curv*x[3]**2) - 3 # more conservative, but more stable
+    c2 = 1000.*np.maximum(f2,0*f2)
+
+    # constrain max steering
+    q1 = 100
+    q2 = 10
+    f3 = abs(x[4]) - 0.5
+    c3 = q1*exp(q2*f3)
+
+    return c1 + c2 + c3
 
 def sim(x, u, dt=0.05, M=1):
     # RK4 with M steps
@@ -154,7 +162,9 @@ ax.set_aspect('equal')
 vehicle_artist = None
 trajectory_artist = None
 utils.draw_track(track.track, 6)
-for step in range(475):
+phi = 0
+# for step in range(475):
+for step in range(525):
     t = step*dt
     print(t)
 
@@ -167,18 +177,23 @@ for step in range(475):
     # t1 = time.perf_counter()
 
     # Calculate state and ref in frenet frame
-    x_frenet = x.copy()    
+    x_frenet = np.zeros((5,1))#x.copy()
     dth = x[2] - xref[2,0]
     x_frenet[0] = 0
     x_frenet[1] = -(x[0] - xref[0,0])*sin(xref[2,0]) + (x[1] - xref[1,0])*cos(xref[2,0])
     x_frenet[2] = dth
+    x_frenet[3] = x[3]
+    x_frenet[4] = phi
     x_ref = xref.copy()
     x_ref[0:2,:] = 0
         
     u, up, Xpf = mppi.solve(x_frenet, x_ref)
     
     u1p = up[0,:]
-    u2p = up[1,:]
+    u2p = Xpf[4,1:] #up[1,:] # input to "real" system is steering angle
+    up = vstack((u1p,u2p))
+    phi = u2p[0]
+    u[1] = phi
     
     # ROLLOUT dynamics for prediction in cartesian space
     Xp = rollout(x, up, dt)
@@ -282,7 +297,7 @@ ax.plot(xf[:,1], label='d')#, marker='o')
 ax.plot(Alat, label='a_lat')
 ax.legend()
 plt.subplot(212)
-plt.plot(U2p[at_sample,:,0])
+# plt.plot(U2p[at_sample,:,0])
 plt.plot()
 
 # Plot the results
@@ -300,6 +315,10 @@ plt.xlim(-80, 100)  # Set x-axis limits from 0 to 5
 plt.ylim(-5, 105) # Set y-axis limits from -1.5 to 1.5
 plt.grid()
 
+plt.figure(2)
+plt.plot(u1_opt)
+plt.plot(u2_opt)
+plt.title('Inputs')
 
 # ax = plt.gca()
 

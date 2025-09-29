@@ -13,17 +13,17 @@ class MPPI():
     
     def __init__(self, f_cont, cost, const_cost, costN = None):
         
-        self.N = 30
-        self.K = 5000
+        self.N = 40
+        self.K = 2000
         self.alpha = 0.01 # exploration ratio
         self.lambd = 12.5
         self.gamma = 0.02*self.lambd
         self.dt = 0.1
-        self.Sigma = np.diag((0.1, 0.01))
+        self.Sigma = np.diag((0.1, 0.025))
         self.invSigma = np.linalg.inv(self.Sigma)
         
-        self.umin = np.array([-3,-0.5])
-        self.umax = np.array([ 3, 0.5])
+        self.umin = np.array([-3,-1.0])
+        self.umax = np.array([ 3, 1.0])
         
         self.nu = 2
         

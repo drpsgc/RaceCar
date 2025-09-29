@@ -238,13 +238,10 @@ plt.grid()
 
 # ax = plt.gca()
 
-# T = 10
-# N = 100
-# plt.subplot(212)
-# plt.title("SQP solver output")
-# plt.plot(u1_opt)
-# plt.plot(u2_opt)
-# plt.xlabel('iteration')
-# plt.grid()
+plt.figure(5)
+plt.title("control inputs")
+plt.plot(u1_opt)
+plt.plot(u2_opt)
+plt.grid()
 
 plt.show()
