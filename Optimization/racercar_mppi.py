@@ -23,6 +23,21 @@ def dyn(x, u):
     return xdot
 
 @jit(nopython=True)
+def f_continuous_filter(x, u, curv):
+    L=3
+    v   = x[3][0]
+    ph  = u[1][0]
+    d   = x[1][0]
+    th  = x[2][0]
+    a   = u[0][0]
+    xdot = np.array([[v*cos(th)/(1-d*curv)],
+                     [v*sin(th)],
+                     [v/L*tan(ph) - (v*curv*cos(th))/(1-d*curv)],
+                     [a]])
+
+    return xdot
+
+@jit(nopython=True)
 def f_continuous(x, u, curv):
     L=3
     v   = x[3][0]
@@ -31,17 +46,44 @@ def f_continuous(x, u, curv):
     th  = x[2][0]
     dph = u[1][0]
     a   = u[0][0]
-    xdot = np.array([[v*cos(th)/(1-d*curv)], 
-                     [v*sin(th)], 
+    xdot = np.array([[v*cos(th)/(1-d*curv)],
+                     [v*sin(th)],
                      [v/L*tan(ph) - (v*curv*cos(th))/(1-d*curv)],
                      [a],
                      [dph]])
-    
+
     return xdot
 
 @jit(nopython=True)
 def cost(x, u, r):
-    return 0.0*(x[1] - r[1])**2 + u.T @ u - 10*x[0]
+    return 0.0*(x[1] - r[1])**2 - 50*x[0] + 0*u.T @ u
+
+@jit(nopython=True)
+def constraints_filter(x, u, curv):
+
+    L = 3
+
+    # max lateral deviation
+    q1 = 100
+    q2 = 10
+    f1 = abs(x[1]) - 3
+    c1 = q1*exp(q2*f1)
+
+    # # max lateral acceleration
+    # q1 = 100
+    # q2 = 10
+    # # f2 = abs((tan(u[1])/L)*x[3]**2) - 3
+    # f2 = abs(curv*x[3]**2) - 3
+    # c2 = q1*exp(q2*f2) if f2 > 0 else 0*f2
+
+    # f1 = abs(x[1]) - 3
+    # c1 = 100.*np.maximum(f1,0*f1)
+
+    f2 = abs((tan(u[1])/L)*x[3]**2) - 3
+    # f2 = abs(curv*x[3]**2) - 3 # more conservative, but more stable
+    c2 = 1000.*np.maximum(f2,0*f2)
+
+    return c1 + c2
 
 @jit(nopython=True)
 def constraints(x, u, curv):
@@ -64,8 +106,8 @@ def constraints(x, u, curv):
     # f1 = abs(x[1]) - 3
     # c1 = 100.*np.maximum(f1,0*f1)
 
-    # f2 = abs((tan(x[4])/L)*x[3]**2) - 3
-    f2 = abs(curv*x[3]**2) - 3 # more conservative, but more stable
+    f2 = abs((tan(x[4])/L)*x[3]**2) - 3
+    # f2 = abs(curv*x[3]**2) - 3 # more conservative, but more stable
     c2 = 1000.*np.maximum(f2,0*f2)
 
     # constrain max steering
@@ -108,13 +150,19 @@ params = {
     "max_iter": 1
 }
 
+# Choose wheter to use a,phi as input with filter or a, dph without filter
+use_filter_version = False
+
 nvar = 6
 nv = 2*100 + 4*(101)
 v0 = zeros(nv)
 v0[0::6] = 0.5*(np.arange(101))
 
 # CREATE SOLVER
-mppi = MPPI(f_continuous, cost, constraints)
+if use_filter_version:
+    mppi = MPPI(f_continuous_filter, cost, constraints_filter, use_filter=True)
+else:
+    mppi = MPPI(f_continuous, cost, constraints, use_filter=False)
 
 start_time = time.perf_counter()
 
@@ -177,24 +225,39 @@ for step in range(525):
     # t1 = time.perf_counter()
 
     # Calculate state and ref in frenet frame
-    x_frenet = np.zeros((5,1))#x.copy()
-    dth = x[2] - xref[2,0]
-    x_frenet[0] = 0
-    x_frenet[1] = -(x[0] - xref[0,0])*sin(xref[2,0]) + (x[1] - xref[1,0])*cos(xref[2,0])
-    x_frenet[2] = dth
-    x_frenet[3] = x[3]
-    x_frenet[4] = phi
-    x_ref = xref.copy()
-    x_ref[0:2,:] = 0
-        
-    u, up, Xpf = mppi.solve(x_frenet, x_ref)
-    
-    u1p = up[0,:]
-    u2p = Xpf[4,1:] #up[1,:] # input to "real" system is steering angle
-    up = vstack((u1p,u2p))
-    phi = u2p[0]
-    u[1] = phi
-    
+    if use_filter_version:
+        x_frenet = np.zeros((4,1))#x.copy()
+        dth = x[2] - xref[2,0]
+        x_frenet[0] = 0
+        x_frenet[1] = -(x[0] - xref[0,0])*sin(xref[2,0]) + (x[1] - xref[1,0])*cos(xref[2,0])
+        x_frenet[2] = dth
+        x_frenet[3] = x[3]
+        x_ref = xref.copy()
+        x_ref[0:2,:] = 0
+
+        u, up, Xpf = mppi.solve(x_frenet, x_ref)
+
+        u1p = up[0,:]
+        u2p = up[1,:]
+    else:
+        x_frenet = np.zeros((5,1))#x.copy()
+        dth = x[2] - xref[2,0]
+        x_frenet[0] = 0
+        x_frenet[1] = -(x[0] - xref[0,0])*sin(xref[2,0]) + (x[1] - xref[1,0])*cos(xref[2,0])
+        x_frenet[2] = dth
+        x_frenet[3] = x[3]
+        x_frenet[4] = phi
+        x_ref = xref.copy()
+        x_ref[0:2,:] = 0
+
+        u, up, Xpf = mppi.solve(x_frenet, x_ref)
+
+        u1p = up[0,:]
+        u2p = Xpf[4,1:] #up[1,:] # input to "real" system is steering angle
+        up = vstack((u1p,u2p))
+        phi = u2p[0]
+        u[1] = phi
+
     # ROLLOUT dynamics for prediction in cartesian space
     Xp = rollout(x, up, dt)
     

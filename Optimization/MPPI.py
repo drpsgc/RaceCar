@@ -11,15 +11,15 @@ from numba import jit, njit, prange
 
 class MPPI():
     
-    def __init__(self, f_cont, cost, const_cost, costN = None):
+    def __init__(self, f_cont, cost, const_cost, costN = None, use_filter=True):
         
         self.N = 40
         self.K = 2000
         self.alpha = 0.01 # exploration ratio
-        self.lambd = 12.5
+        self.lambd = 100
         self.gamma = 0.02*self.lambd
         self.dt = 0.1
-        self.Sigma = np.diag((0.1, 0.025))
+        self.Sigma = np.diag((0.5, 0.025))
         self.invSigma = np.linalg.inv(self.Sigma)
         
         self.umin = np.array([-3,-1.0])
@@ -36,7 +36,10 @@ class MPPI():
         self.costN = costN
         
         # Filter
-        self.filt = utils.SGolay(3, 11)
+        if use_filter:
+            self.filt = utils.SGolay(3, 11)
+        else:
+            self.filt = None
         
         # use numba
         self.use_numba = True
@@ -48,6 +51,12 @@ class MPPI():
         eps = np.random.multivariate_normal(np.zeros(self.nu), self.Sigma, size=(self.N, self.K))
         eps = eps.reshape(self.nu, self.N, self.K)
         
+        # Elitism
+        eps[:,:,0] = 0
+        # Exploration (eps_new = eps - u_nom -> u = u_nom + esp_new = eps)
+        n_explore = int(self.alpha*self.K)
+        eps[:,:,1:n_explore+1] -= self.u_nom[:,:,np.newaxis]
+
         if not self.use_numba:
             J = self.evaluate_trajectories(x0, r, eps, J)
         else:
@@ -61,8 +70,13 @@ class MPPI():
         
         # eps*w.T -> [nu x N x K]*[1 x K] =  [nu x N x K] then sum over 2nd axis [K] to obtain [nu x K]
         u_raw = self.u_nom + np.sum(eps*w.T, axis=2)
+        u_sat = np.clip(u_raw, self.umin[:,None], self.umax[:,None])
         
-        self.u_nom = self.filt.smooth(u_raw)
+        if self.filt is not None:
+            self.u_nom = self.filt.smooth(u_sat)
+        else:
+            self.u_nom = u_sat
+
         u_out = np.clip(self.u_nom[:,0], self.umin, self.umax)
         u_out = u_out.reshape(-1,1)
         
@@ -113,13 +127,7 @@ def evaluate_trajectories_old(x0, r, u_nom, eps, umin, umax, dt, J, K, N, f_cont
         x = x0.copy()
         J[k]  = 0
         for t in range(N):
-            # Elitism, explloitation, exploration
-            if k == 0:
-                u = u_nom[:,t]
-            elif k < (1-alpha)*K:
-                u = u_nom[:,t] + eps[:,t,k]
-            else:
-                u = eps[:,t,k]
+            u = u_nom[:,t] + eps[:,t,k]
                 
             v = np.clip(u, umin, umax)
             v = v.reshape(-1,1)
@@ -142,13 +150,8 @@ def evaluate_trajectories(x0, r, u_nom, eps, umin, umax, dt, J, K, N, f_cont, co
         x = x0.copy()
         J[k] = 0.0
         for t in range(N):
-            # Elitism, exploitation, exploration
-            if k == 0:
-                u = u_nom[:, t]
-            elif k < (1 - alpha) * K:
-                u = u_nom[:, t] + eps[:, t, k]
-            else:
-                u = eps[:, t, k]
+            u = u_nom[:, t] + eps[:, t, k]
+
 
             v = np.clip(u, umin, umax).reshape(-1, 1)
             x = x + dt * f_cont(x, v, r[4, t])
