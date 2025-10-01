@@ -1,0 +1,12 @@
+name: racecar
+channels:
+  - defaults
+dependencies:
+  - casadi
+  - numba
+  - matplotlib
+  - numpy
+  - spyder
+  - scipy
+  - shapely
+prefix: /home/psgc/miniconda3/envs/racecar
