@@ -2,10 +2,15 @@ from casadi import *
 from numpy import *
 import matplotlib.pyplot as plt
 import time
-from racetrack import RaceTrack
 from SQP import SQP
 
+# Hacky way to import utilities
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'utils')))
+
 import utils
+from racetrack import RaceTrack
 
 
 def dyn(x, u):
@@ -105,7 +110,7 @@ for step in range(475):
     xx = horzcat(x1p, x2p, x3p).T
     t1 = time.perf_counter()
 
-    xref = utils.get_ref_race_frenet(xx, params["N"]+1, track.track, idx0)
+    xref = utils.get_ref_race_frenet(xx.full(), params["N"]+1, track.track, idx0)
     t2 = time.perf_counter()
     # print(xref[:,1:5])
     # t1 = time.perf_counter()

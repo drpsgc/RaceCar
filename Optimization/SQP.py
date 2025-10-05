@@ -9,7 +9,13 @@ Created on Thu Sep 25 18:00:50 2025
 from casadi import *
 from numpy import *
 
+# Hacky way to import utilities
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'utils')))
+
 import utils
+import racetrack
 
 
 class SQP:

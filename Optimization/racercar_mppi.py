@@ -6,20 +6,27 @@ Created on Sat Sep 27 10:53:35 2025
 @author: psgc
 """
 
-from casadi import *
-from numpy import *
+# from casadi import *
+# from numpy import *
+import numpy as np
 import matplotlib.pyplot as plt
 import time
 from racetrack import RaceTrack
 from MPPI import MPPI
 from numba import jit
 
+# Hacky way to import utilities
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'utils')))
+
 import utils
+from racetrack import RaceTrack
 
 
 def dyn(x, u):
     L = 3
-    xdot = np.array([x[3]*cos(x[2]), x[3]*sin(x[2]), x[3]/L*tan(u[1]), u[0]])
+    xdot = np.array([x[3]*np.cos(x[2]), x[3]*np.sin(x[2]), x[3]/L*np.tan(u[1]), u[0]])
     return xdot
 
 @jit(nopython=True)
@@ -30,9 +37,9 @@ def f_continuous_filter(x, u, curv):
     d   = x[1][0]
     th  = x[2][0]
     a   = u[0][0]
-    xdot = np.array([[v*cos(th)/(1-d*curv)],
-                     [v*sin(th)],
-                     [v/L*tan(ph) - (v*curv*cos(th))/(1-d*curv)],
+    xdot = np.array([[v*np.cos(th)/(1-d*curv)],
+                     [v*np.sin(th)],
+                     [v/L*np.tan(ph) - (v*curv*np.cos(th))/(1-d*curv)],
                      [a]])
 
     return xdot
@@ -46,9 +53,9 @@ def f_continuous(x, u, curv):
     th  = x[2][0]
     dph = u[1][0]
     a   = u[0][0]
-    xdot = np.array([[v*cos(th)/(1-d*curv)],
-                     [v*sin(th)],
-                     [v/L*tan(ph) - (v*curv*cos(th))/(1-d*curv)],
+    xdot = np.array([[v*np.cos(th)/(1-d*curv)],
+                     [v*np.sin(th)],
+                     [v/L*np.tan(ph) - (v*curv*np.cos(th))/(1-d*curv)],
                      [a],
                      [dph]])
 
@@ -66,8 +73,8 @@ def constraints_filter(x, u, curv):
     # max lateral deviation
     q1 = 100
     q2 = 10
-    f1 = abs(x[1]) - 3
-    c1 = q1*exp(q2*f1)
+    f1 = np.abs(x[1]) - 3
+    c1 = q1*np.exp(q2*f1)
 
     # # max lateral acceleration
     # q1 = 100
@@ -79,7 +86,7 @@ def constraints_filter(x, u, curv):
     # f1 = abs(x[1]) - 3
     # c1 = 100.*np.maximum(f1,0*f1)
 
-    f2 = abs((tan(u[1])/L)*x[3]**2) - 3
+    f2 = np.abs((np.tan(u[1])/L)*x[3]**2) - 3
     # f2 = abs(curv*x[3]**2) - 3 # more conservative, but more stable
     c2 = 1000.*np.maximum(f2,0*f2)
 
@@ -93,8 +100,8 @@ def constraints(x, u, curv):
     # max lateral deviation
     q1 = 100
     q2 = 10
-    f1 = abs(x[1]) - 3
-    c1 = q1*exp(q2*f1)
+    f1 = np.abs(x[1]) - 3
+    c1 = q1*np.exp(q2*f1)
 
     # # max lateral acceleration
     # q1 = 100
@@ -106,15 +113,15 @@ def constraints(x, u, curv):
     # f1 = abs(x[1]) - 3
     # c1 = 100.*np.maximum(f1,0*f1)
 
-    f2 = abs((tan(x[4])/L)*x[3]**2) - 3
+    f2 = np.abs((np.tan(x[4])/L)*x[3]**2) - 3
     # f2 = abs(curv*x[3]**2) - 3 # more conservative, but more stable
     c2 = 1000.*np.maximum(f2,0*f2)
 
     # constrain max steering
     q1 = 100
     q2 = 10
-    f3 = abs(x[4]) - 0.5
-    c3 = q1*exp(q2*f3)
+    f3 = np.abs(x[4]) - 0.5
+    c3 = q1*np.exp(q2*f3)
 
     return c1 + c2 + c3
 
@@ -155,7 +162,7 @@ use_filter_version = False
 
 nvar = 6
 nv = 2*100 + 4*(101)
-v0 = zeros(nv)
+v0 = np.zeros(nv)
 v0[0::6] = 0.5*(np.arange(101))
 
 # CREATE SOLVER
@@ -216,7 +223,7 @@ for step in range(525):
     t = step*dt
     print(t)
 
-    xx = horzcat(x1p, x2p, x3p).T
+    xx = np.vstack((x1p, x2p, x3p))
     t1 = time.perf_counter()
 
     xref = utils.get_ref_race_frenet(xx, params["N"]+1, track.track, idx0)
@@ -229,7 +236,7 @@ for step in range(525):
         x_frenet = np.zeros((4,1))#x.copy()
         dth = x[2] - xref[2,0]
         x_frenet[0] = 0
-        x_frenet[1] = -(x[0] - xref[0,0])*sin(xref[2,0]) + (x[1] - xref[1,0])*cos(xref[2,0])
+        x_frenet[1] = -(x[0] - xref[0,0])*np.sin(xref[2,0]) + (x[1] - xref[1,0])*np.cos(xref[2,0])
         x_frenet[2] = dth
         x_frenet[3] = x[3]
         x_ref = xref.copy()
@@ -243,7 +250,7 @@ for step in range(525):
         x_frenet = np.zeros((5,1))#x.copy()
         dth = x[2] - xref[2,0]
         x_frenet[0] = 0
-        x_frenet[1] = -(x[0] - xref[0,0])*sin(xref[2,0]) + (x[1] - xref[1,0])*cos(xref[2,0])
+        x_frenet[1] = -(x[0] - xref[0,0])*np.sin(xref[2,0]) + (x[1] - xref[1,0])*np.cos(xref[2,0])
         x_frenet[2] = dth
         x_frenet[3] = x[3]
         x_frenet[4] = phi
@@ -254,7 +261,7 @@ for step in range(525):
 
         u1p = up[0,:]
         u2p = Xpf[4,1:] #up[1,:] # input to "real" system is steering angle
-        up = vstack((u1p,u2p))
+        up = np.vstack((u1p,u2p))
         phi = u2p[0]
         u[1] = phi
 
@@ -273,7 +280,7 @@ for step in range(525):
 
     xf += [Xpf[0:4,0]]
 
-    a_lat = x[3]**2*( 1/L*tan(u[1]))
+    a_lat = x[3]**2*( 1/L*np.tan(u[1]))
     Alat += [a_lat]
     
     # SIMULATION

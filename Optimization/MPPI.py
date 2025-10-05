@@ -6,8 +6,15 @@ Created on Fri Sep 26 23:47:40 2025
 @author: psgc
 """
 import numpy as np
-import utils
 from numba import jit, njit, prange
+
+# Hacky way to import utilities
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'utils')))
+
+import utils
+from racetrack import RaceTrack
 
 class MPPI():
     
