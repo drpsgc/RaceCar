@@ -1,5 +1,6 @@
 name: racecar
 channels:
+  - conda-forge
   - defaults
 dependencies:
   - casadi
