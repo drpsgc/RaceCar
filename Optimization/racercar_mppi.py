@@ -11,7 +11,6 @@ Created on Sat Sep 27 10:53:35 2025
 import numpy as np
 import matplotlib.pyplot as plt
 import time
-from racetrack import RaceTrack
 from MPPI import MPPI
 from numba import jit
 
