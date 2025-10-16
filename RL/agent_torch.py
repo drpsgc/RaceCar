@@ -150,7 +150,8 @@ class Agent():
         
         self.sum_rewards = 0
         self.episode_steps = 0
-        self.critic_losses = []
+        self.crit_losses = []
+        self.actor_losses = []
 
     def policy(self, states, deterministic = False):
         """
@@ -304,6 +305,9 @@ class Agent():
         with torch.no_grad():
             polyak_update(self.critic1.parameters(), self.target1.parameters(), self.polyak_tau)
             polyak_update(self.critic2.parameters(), self.target2.parameters(), self.polyak_tau)
+        
+        self.crit_losses += [q_loss.item()]
+        self.actor_losses += [pi_loss.item()]
         
        
 

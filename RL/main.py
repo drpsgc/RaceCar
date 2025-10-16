@@ -9,6 +9,7 @@ Created on Thu Oct  2 17:59:32 2025
 import agent_torch
 import numpy as np
 import torch
+import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
 # Hacky way to import utilities
@@ -23,6 +24,7 @@ import racetrack
 class Racecar:
     def __init__(self, x0):
         self.L = 3
+        self.x0 = x0
         self.x = x0
         self.max_d = 1.5 # max tolerated lateral error (normalized), if exceeded episode terminates
         self.steps = 0
@@ -59,29 +61,64 @@ class Racecar:
     #     rdelta = max(abs(u[1]) - 0.5, 0)
     #     return 0.5*r_v - 2*r_dmax - 2*r_alatmax - ra - rdelta
 
+    # def get_reward(self, obs, u):
+    #     s = obs[0][0]
+    #     d = obs[1][0]
+    #     psi = obs[2][0]
+    #     v = obs[3][0]
+    #     delta = u[1][0]
+    
+    #     dmax_penalty = -2.*max(abs(d) - 1., 0.)
+    #     d_penalty = -0.0*(abs(d)) # small penalty to encourage driving in the center
+    #     lateral_accel = (v**2 / self.L) * np.tan(delta)
+    #     a_lat_penalty = -0.2 * (lateral_accel / 3.0)**2
+    #     neg_vel_penalty = 5.*min(v, 0.) # always < 0 -> penalty
+    #     steer_penalty = -0.0*delta**2 # smooth steering
+
+    
+    #     # Progress reward
+    #     progress = s + 0.1*v*np.cos(psi)
+        
+    #     # Being aligned with track
+    #     heading = -2*abs(psi)
+    
+    #     # Combine
+    #     return progress + dmax_penalty + d_penalty + 0*a_lat_penalty + heading + neg_vel_penalty + steer_penalty
+
     def get_reward(self, obs, u):
         s = obs[0][0]
         d = obs[1][0]
         psi = obs[2][0]
         v = obs[3][0]
+        a = u[0][0]
         delta = u[1][0]
     
-        dmax_penalty = -2.*max(abs(d) - 1., 0.)
-        d_penalty = -0.0*(abs(d)) # small penalty to encourage driving in the center
-        lateral_accel = (v**2 / self.L) * np.tan(delta)
-        a_lat_penalty = -0.2 * (lateral_accel / 3.0)**2
-        neg_vel_penalty = 5.*min(v, 0.) # always < 0 -> penalty
-        steer_penalty = -0.0*delta**2 # smooth steering
-
+        progress = 0.4 * v * np.cos(psi)
     
-        # Progress reward
-        progress = s + 0.1*v*np.cos(psi)
+        # Centering: smooth attractive reward toward d=0 (gaussian-like)
+        # at d=0 gives +0.1, at d=0.5 gives small positive, at d=1 gives small negative
+        r_center = 0.15 * np.exp(-0.5 * (d / 0.4)**2)  # tune sigma=0.4
+        # dmax_penalty = -1.*max(abs(d) - 1., 0.)
+        dmax_penalty = -0.75 * F.softplus(torch.abs(torch.tensor(d)) - 1.0, beta=10)
+    
+        # Heading penalty (mild)
+        r_heading = -0.2 * (abs(psi)) 
+    
+        # Vel penalty for going backwards
+        r_neg_vel = -1.0 * max(-v, 0.0)
+    
+        # Control costs (small, quadratic)
+        # r_accel = -0.01 * (a**2)
+        r_steer = -0.015 * (delta**2)
         
-        # Being aligned with track
-        heading = -2*abs(psi)
+        lat_accel = ((15.0*v)**2 / self.L) * np.tan(delta)
+        # a_lat_penalty = -0.75 * max(abs(lat_accel) - 3., 0.)
+        a_lat_penalty = -0.03 *  F.softplus(torch.abs(torch.tensor(lat_accel)) - 3.0, beta=3) 
     
         # Combine
-        return progress + dmax_penalty + d_penalty + 0*a_lat_penalty + heading + neg_vel_penalty + steer_penalty
+        reward = progress + 0.*r_center + r_heading + r_neg_vel + r_steer + dmax_penalty + a_lat_penalty
+    
+        return reward
 
         
 
@@ -105,13 +142,13 @@ class Racecar:
         reward = self.get_reward(obs, u)
         terminal = False
         if abs(obs[1]) > self.max_d:
-            reward += -5
+            reward += -2
             terminal = True
         if obs[0] > self.tracks[-1][-5,4]/100.0: # reach (a little bit before) end of track
-            reward += 5
+            reward += 2
             terminal = True
         if self.dt*self.steps > self.tracks[-1][-1,4] / 5.0: # if end is not reached in time with 5 mps average speed
-            reward += -2
+            reward += -1
             terminal = True
         
         self.steps = self.steps + 1;
@@ -121,7 +158,7 @@ class Racecar:
     def reset(self):
         if self.episode in self.new_track_episode:
             self.tracks += [self.create_track()]
-        self.x = np.array([[0.],[0.],[0.],[10.]])
+        self.x = self.x0
         self.steps = 0
         return self.get_observation()
     
@@ -149,10 +186,10 @@ class Racecar:
         x[1] = -(self.x[0] - xref[0,0])*np.sin(xref[2,0]) + (self.x[1] - xref[1,0])*np.cos(xref[2,0])
         x[2] = dth
         x[3] = self.x[3]
-        x /= xscale
         
         # s-positions of curvature values to add to the observation
-        s_lookahead = [5, 10, 20, 30, 40, 50]
+        s_lookahead = [0, 2, 5, 10, 15, 20, 25]
+        s_lookahead = [s + x[0]  for s in s_lookahead]
         indices = np.searchsorted(self.tracks[-1][:,4], s_lookahead, side='left')
         indices = np.clip(indices, 0, self.tracks[-1].shape[0] - 1)
         k = self.tracks[-1][indices, 3]
@@ -160,15 +197,17 @@ class Racecar:
         for i in range(4,10):
             x[i] = k[i-4]
         
+        x /= xscale
+
         return x
             
 
 ###
 
-TRAIN = True
-LOAD_MODEL = False
-WEIGHTS_FILE = 'SAC_race3.pt'
-WEIGHTS_FILE_SAVE = 'SAC_race3.pt'
+TRAIN = False
+LOAD_MODEL = not TRAIN#True
+WEIGHTS_FILE = 'SAC_race4.pt'
+WEIGHTS_FILE_SAVE = 'SAC_race4.pt'
 
 # RL agent
 agent_parameters = {
@@ -186,7 +225,8 @@ agent_parameters = {
     'replay_buffer_size': 15000,
     'minibatch_sz': 32,
     'num_replay_updates_per_step': 8,
-    'gamma': 0.8,
+    'gamma': 0.9,
+    'alpha':0.005,
     'tau': 1,
     'polyak_tau': 0.005,
 }
@@ -265,15 +305,37 @@ if TRAIN:
     agent.save_checkpoint(WEIGHTS_FILE_SAVE)
 
 #%% Plot
-xx = np.asarray(X[episode-1])
+xx = np.asarray(X[episode-1]).squeeze()
+
 plt.plot(env.tracks[0][:,0],env.tracks[0][:,1])
 plt.plot(xx[:,0], xx[:,1])
+
 plt.figure()
 uu = np.asarray(U[episode-1][:-1])
 plt.plot(uu[:,1])
 plt.plot(uu[:,0])
 
+plt.figure()
+L = 3
+a_lat = xx[0:-1,3]**2*( 1/L*np.tan(uu[:,1]))
+plt.plot(a_lat)
+plt.title("Lateral accel")
+
+plt.figure()
+plt.plot(agent.crit_losses)
+plt.plot(agent.actor_losses)
+plt.title("Losses")
+
+
 
 # SAC. heading=2, d=0, steer =0, added progress s + 0.2vcos (a lot faster)
 # SAC2 is initial working model. penalty=2 on heading so it doesnt cut corners a lot
+# SAC3 Fixed missing curvatures [0, 2, 5, 10, 15, 20, ] (last was missing). 
+        # Rewards progress = 0.4 * v * np.cos(psi)  dmax_penalty = -0.75 * F.softplus(torch.abs(torch.tensor(d)) - 1.0, beta=10)
+        # r_heading = -0.2 * (abs(psi)) 
+        # r_neg_vel = -1.0 * max(-v, 0.0)
+        # r_steer = -0.015 * (delta**2)
+        # lat_accel = ((15.0*v)**2 / self.L) * np.tan(delta)
+        # a_lat_penalty = -0.03 *  F.softplus(torch.abs(torch.tensor(lat_accel)) - 3.0, beta=3) 
+        # Trained for 300 episodes. Fi
     
