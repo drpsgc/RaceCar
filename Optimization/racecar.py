@@ -54,7 +54,7 @@ nx = 4
 nu = 2
 ns = 2
 nvar = nx + nu + ns
-nv = 2*params["N"] + 4*(params["N"]+1) + 2*(params["N"]+1) # nu, nx, ns
+nv = nu*params["N"] + nx*(params["N"]+1) + ns*(params["N"]+1) # nu, nx, ns
 v0 = zeros(nv)
 v0[0::nvar] = 0.5*(np.arange(params["N"]+1))
 sqp = SQP(params)
@@ -107,7 +107,7 @@ vehicle_artist = None
 trajectory_artist = None
 utils.draw_track(track.track, 6)
 # for step in range(950):
-for step in range(475):
+for step in range(675):
     t = step*dt
     # print(t)
 
@@ -198,18 +198,21 @@ plt.title("speed")
 
 # Show prediction
 plt.figure(2)
-at_sample = 5
+at_sample = 475
 # plt.plot(X1p[at_sample,:,0], X2p[at_sample,:,0])
 # plt.plot(Xr1[at_sample,:], Xr2[at_sample,:])
-plt.plot(X2p[at_sample,:])
+# plt.plot(X2p[at_sample,:])
+plt.plot(Xr1[at_sample,:])
 plt.plot(Xr2[at_sample,:])
+plt.plot(Xr3[at_sample,:])
+plt.plot(Xr4[at_sample,:])
 plt.grid()
 plt.title("Prediction at given sample")
 
 plt.figure(3)
 ax = plt.subplot(211)
 # ax.plot(Xr3[at_sample,:], label='th_ref_atsamp')
-# ax.plot(SOLVED, label='solved')
+ax.plot(SOLVED, label='solved')
 ax.plot(xr3, label='th_ref')
 # ax.plot(xr2, label='y_ref')
 # ax.plot(xr1, label='x_ref')

@@ -133,11 +133,6 @@ class SQP:
             self.vmin[self.nvar*k + self.nx + self.ns : self.nvar*k + self.nx + self.ns + self.nu] = [-3, -np.pi/5]
             self.vmax[self.nvar*k + self.nx + self.ns : self.nvar*k + self.nx + self.ns + self.nu] = [ 3,  np.pi/5]
 
-            # State constraints
-            # max lateral distance
-            # self.vmin[self.nvar*k + 1] = -3
-            # self.vmax[self.nvar*k + 1] =  3
-
             g.append( xk[k][1] - sk[k][0] )
             self.gmin += [-inf]
             self.gmax += [3]
@@ -156,7 +151,7 @@ class SQP:
             self.gmin += [-3]
             self.gmax += [inf]
 
-            J += (xk[k] - xref[0:4, k]).T @ (Q * (xk[k] - xref[0:4, k])) + uk[k].T @ (R * uk[k]) + 5e1*sk[k].T @ sk[k] + q[3] * xk[k][0]#xk[k][3]*cos(xk[k][2] - xref[2,k])
+            J += (xk[k] - xref[0:4, k]).T @ (Q * (xk[k] - xref[0:4, k])) + uk[k].T @ (R * uk[k]) + 3e1*sk[k].T @ sk[k] + q[3] * xk[k][0]#xk[k][3]*cos(xk[k][2] - xref[2,k])
 
         # Cost function
         self.J_fcn = Function('J_fcn', [v, xref], [J])
@@ -203,7 +198,7 @@ class SQP:
 
         # calculate state in frenet frame [s, d, th-th_path, v]
         x = x_c.copy()
-        dth = x_c[2] - xref[2,0]
+        dth = atan2(sin(x_c[2] - xref[2,0]), cos(x_c[2] - xref[2,0])) # correct for angle wrap
         x[0] = 0
         x[1] = -(x_c[0] - xref[0,0])*sin(xref[2,0]) + (x_c[1] - xref[1,0])*cos(xref[2,0])
         x[2] = dth

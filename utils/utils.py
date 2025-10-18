@@ -163,11 +163,11 @@ def get_ref_race(X, N, TRACK):
 def get_ref_race_frenet(X, N, TRACK, idx0):
 
     N = X.shape[1]
-    ref = np.zeros((5,N))
+    ref = np.zeros((5,N)) # [x,y,theta,v,k]
     for i in range(N):
         # Propagate state
         x = X[:,i:i+1]# + ca.vertcat(0.1*np.cos(X[2,i]), 0.1*np.sin(X[2,i]),0)
-        ref[0:2, i],idx = proj_to_path(x, TRACK, idx0)
+        ref[0:2, i],idx = proj_to_path(x, TRACK, 0)
         ref[2, i] = TRACK[idx,2]# if abs(TRACK[idx,2] - x[2]) < abs(TRACK[idx,2] + 2*np.pi - x[2]) else TRACK[idx,2] + 2*np.pi   
         ref[4, i] = TRACK[idx,3]
         idx0 = idx # start search from current
