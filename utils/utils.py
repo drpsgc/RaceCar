@@ -3,6 +3,9 @@ import casadi as ca
 import matplotlib.pyplot as plt
 import math
 
+from matplotlib.collections import LineCollection
+from matplotlib.colors import Normalize
+
 # def signed_distance_to_line(p, p1, p2):
 #     px = p[0]
 #     py = p[1]
@@ -192,7 +195,7 @@ def draw_track(track, w):
         left[i,:] = track[i,0:2] + w/2*normal
         right[i,:] = track[i,0:2] - w/2*normal
     
-    plt.plot(track[:,0], track[:,1])
+    plt.plot(track[:,0], track[:,1],'k', linewidth=1)
     plt.plot(left[:,0], left[:,1], 'r--')
     plt.plot(right[:,0], right[:,1],'r--')
     
@@ -254,6 +257,58 @@ def draw_vehicle_and_trajectory(ax, x, y, heading, future_states,
 
     return vehicle_artist, trajectory_artist
 
+
+def plot_colored_line(x, y, c, cmap='RdYlGn_r', linewidth=2, colorbar_label='Value', ax=None):
+    """
+    Plot a 2D line (x, y) whose color varies according to a third variable c.
+
+    Parameters
+    ----------
+    x, y : array-like
+        Coordinates of the line.
+    c : array-like
+        Values used to color the line (same length as x and y).
+    cmap : str, optional
+        Matplotlib colormap name (default 'RdYlGn_r' for red=high, green=low).
+    linewidth : float, optional
+        Width of the plotted line (default 2).
+    colorbar_label : str, optional
+        Label for the colorbar.
+    ax : matplotlib.axes.Axes, optional
+        Axis to plot on. If None, a new figure and axis are created.
+    """
+
+    x = np.asarray(x)
+    y = np.asarray(y)
+    c = np.asarray(c)
+
+    # Create line segments
+    points = np.array([x, y]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+    # Normalize color values
+    norm = Normalize(vmin=np.nanmin(c), vmax=np.nanmax(c))
+
+    # Create LineCollection
+    lc = LineCollection(segments, cmap=cmap, norm=norm)
+    lc.set_array(c)
+    lc.set_linewidth(linewidth)
+
+    # Create figure/axis if needed
+    if ax is None:
+        fig, ax = plt.subplots()
+
+    # Add the colored line
+    ax.add_collection(lc)
+    ax.autoscale()
+    ax.set_xlim(x.min(), x.max())
+    ax.set_ylim(y.min(), y.max())
+
+    # Add colorbar
+    cb = plt.colorbar(lc, ax=ax)
+    cb.set_label(colorbar_label)
+
+    return ax
 
 class SGolay:
     def __init__(self, m, w):

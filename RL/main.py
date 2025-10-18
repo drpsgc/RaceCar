@@ -22,7 +22,7 @@ import racetrack
 
 ### Environment
 class Racecar:
-    def __init__(self, x0):
+    def __init__(self, x0, train=False):
         self.L = 3
         self.x0 = x0
         self.x = x0
@@ -33,8 +33,12 @@ class Racecar:
         self.max_time = None
         self.mean_speed_min = 7
         
-        # Random track generator
-        self.track_generator = racetrack.RaceTrack("random")
+        # Track generator
+        self.train = train
+        if train:
+            self.track_generator = racetrack.RaceTrack("random")
+        else:
+            self.track_generator = racetrack.RaceTrack("circuit")
         self.episode = 0
         self.tracks = [self.create_track()]
         self.new_track_episode = [20000, 30000, 35000, 37500] # episodes at which to generate a new track
@@ -167,7 +171,10 @@ class Racecar:
     
     def create_track(self):
         # track = np.asarray(self.track_generator.create_segment(0, 0, 0, 0, 0, steps=2000, ds=0.5))#
-        track = np.asarray(self.track_generator.create_random(20))
+        if self.train:
+            track = np.asarray(self.track_generator.create_random(20))
+        else:
+            track = self.track_generator.track
         self.track_len = track[-1,4]
         self.max_time = self.track_len / self.mean_speed_min # Maximum time assuming mean speed min
         
@@ -247,8 +254,11 @@ if LOAD_MODEL:
 
 # Environment
 # feature vector [s, d, th_error, v, k_5, k_10, k_20, k_30, k_40, k_50] where k_x is curvature at x meters ahead
-x0 = np.array([[0.],[0.],[0.],[10.]])
-env = Racecar(x0)
+if TRAIN:
+    x0 = np.array([[0.],[0.],[0.],[10.]])
+else:
+    x0 = np.array([[0.],[100.],[0.],[10.]])
+env = Racecar(x0, TRAIN)
 
 num_episodes = 150
 if not TRAIN:
@@ -285,6 +295,8 @@ while episode < num_episodes:
             rew = torch.tensor(r.flatten(), dtype=torch.float32)
             obsv = torch.tensor(obs.flatten(), dtype=torch.float32)
             agent.end(rew)
+            print("FINISHED! Lap time: ", 0.1*steps)
+            break
         X[episode] += [x]
         U[episode] += [u]
         R[episode] += [r]
@@ -302,9 +314,6 @@ while episode < num_episodes:
 xx = np.asarray(X[-1])
 uu = np.asarray(U[-1])
 # rr = np.asarray(R[-1])
-print(u, " ", x, " ", r)
-print("---")
-print(obs)
 #%%
 print("")
 if TRAIN:

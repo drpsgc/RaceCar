@@ -1,5 +1,4 @@
-from casadi import *
-from numpy import *
+import numpy as np
 import matplotlib.pyplot as plt
 import time
 from SQP import SQP
@@ -15,7 +14,7 @@ from racetrack import RaceTrack
 
 def dyn(x, u):
     L = 3
-    xdot = np.array([x[3]*cos(x[2]), x[3]*sin(x[2]), x[3]/L*tan(u[1]), u[0]])
+    xdot = np.array([x[3]*np.cos(x[2]), x[3]*np.sin(x[2]), x[3]/L*np.tan(u[1]), u[0]])
     return xdot
 
 def sim(x, u, dt=0.05, M=1):
@@ -28,7 +27,6 @@ def sim(x, u, dt=0.05, M=1):
         k3 = dyn(x + DT/2 * k2, u)
         k4 = dyn(x + DT   * k3, u)
         xf += DT/6*(k1   + 2*k2   + 2*k3   + k4)
-        # xf[2] = (xf[2] + np.pi) % (2*np.pi) - np.pi # wrap to [-pi pi]
     return xf
 
 def rollout(x0, U, dt):
@@ -55,7 +53,7 @@ nu = 2
 ns = 2
 nvar = nx + nu + ns
 nv = nu*params["N"] + nx*(params["N"]+1) + ns*(params["N"]+1) # nu, nx, ns
-v0 = zeros(nv)
+v0 = np.zeros(nv)
 v0[0::nvar] = 0.5*(np.arange(params["N"]+1))
 sqp = SQP(params)
 
@@ -68,16 +66,13 @@ dt = params["T"]/params["N"]#0.05
 L = 3
 
 x = np.array([[0.],[100.],[0],[10.]])
-# x = np.array([[-50.],[35],[-3*pi/2],[10.]])
 # propagate state with assumed 0 input to obtain v0
 x0 = x.copy()
 u0 = np.zeros((2,1))
-v0[0:4] = x0.flatten()
+v0[0:nx] = x0.flatten()
 for k in range(1,params["N"]+1):
     x0 = sim(x0,u0)
-    v0[nvar*k : nvar*k + 4] = x0.flatten()
-# v0[2::nvar] = x0[2]
-# v0[3::nvar] = x0[3]
+    v0[nvar*k : nvar*k + nx] = x0.flatten()
 v_opt = v0
 x1p = v_opt[0::nvar].copy()
 x2p = v_opt[1::nvar].copy()
@@ -101,46 +96,51 @@ Alat = []
 idx0 = 0
 T = []
 
+# Prepare plots
 fig, ax = plt.subplots()
 ax.set_aspect('equal')
 vehicle_artist = None
 trajectory_artist = None
 utils.draw_track(track.track, 6)
-# for step in range(950):
+
 for step in range(675):
     t = step*dt
-    # print(t)
 
-    xx = horzcat(x1p, x2p, x3p).T
+    # x,y,theta trajectory in global coordinates
+    xx = np.vstack((x1p, x2p, x3p))
 
-    xref = utils.get_ref_race_frenet(xx.full(), params["N"]+1, track.track, idx0)
+    xref = utils.get_ref_race_frenet(xx, params["N"]+1, track.track, idx0)
 
     t1 = time.perf_counter()
     v_opt, solved, x_ref = sqp.solve(x, v_opt, xref)
     t2 = time.perf_counter()
     
-    # Have to modify this by converting from prediction to x,y or rolling out input
-    # x1p = v_opt[0::nvar] #+ x[0]
-    # x2p = v_opt[1::nvar] #+ x[1]
-    # x3p = v_opt[2::nvar] #+ x[2]
+    # Prediction from SQP is in Frenet frame
+    # Calculate x,y,theta by rolling out input trajectory
+    # (alternatively could be done geometrically)
     u1p = v_opt[nx + ns::nvar]
     u2p = v_opt[nx + ns + 1::nvar]
-    up = np.array(horzcat(u1p, u2p).T)
+    up = np.concat((u1p, u2p),axis=1).T
     Xp = rollout(x, up, dt)
-    x1p = Xp[0,:] #+ x[0]
-    x2p = Xp[1,:] #+ x[1]
-    x3p = Xp[2,:] #+ x[2]
+    x1p = Xp[0,:]
+    x2p = Xp[1,:]
+    x3p = Xp[2,:]
 
     elapsed_time = t2 - t1
     T += [elapsed_time]
     print("solve time: ", elapsed_time)
 
+    # Save trajectories for visualization
+    u = np.array(v_opt[nx+ns : nx+ns+nu])
+
+    # Simulate race car
+    x = sim(x, u, dt)
+
+    # Save trajectories for visualization
     xf += [v_opt[0:4]]
-    u = np.array(v_opt[nx+ns:nx+ns+nu])
-    a_lat = x[3]**2*( 1/L*tan(u[1]))
+    a_lat = x[3]**2*( 1/L*np.tan(u[1]))
     Alat += [a_lat]
     
-    x = sim(x, u, dt)
     X += [x]
     U += [u]
     Xr += [xref[:,0]]
@@ -160,11 +160,15 @@ for step in range(675):
     vehicle_artist, trajectory_artist = utils.draw_vehicle_and_trajectory(ax, x[0], x[1], x[2], Xp, vehicle_artist=vehicle_artist, trajectory_artist=trajectory_artist)
 
     plt.pause(0.01)  # brief pause for animation
+    if xref[5,0] >= track.track[-2,4]:
+        print("FINISHED! Lap time: ", dt*step)
+        break
 
 
 print("max time: ", max(T))
-print("mean time: ", mean(T))
-# Retrieve the solution
+print("mean time: ", np.mean(T))
+
+# Convert trajectories to numpy
 X = np.asarray(X)
 U = np.asarray(U)
 Xr = np.asarray(Xr)
@@ -178,7 +182,6 @@ Xr4 = np.asarray(Xr4)
 xf = np.asarray(xf)
 Alat = np.asarray(Alat)
 
-
 x1_opt = X[:, 0]
 x2_opt = X[:, 1]
 x3_opt = X[:, 2]
@@ -189,62 +192,61 @@ xr3 = Xr[:, 2]
 u1_opt = U[:, 0]
 u2_opt = U[:, 1]
 
-# print(x1_opt)
-# print(x2_opt)
-#%%
-plt.figure(4)
-plt.plot(x4_opt)
-plt.title("speed")
 
-# Show prediction
-plt.figure(2)
-at_sample = 475
-# plt.plot(X1p[at_sample,:,0], X2p[at_sample,:,0])
-# plt.plot(Xr1[at_sample,:], Xr2[at_sample,:])
-# plt.plot(X2p[at_sample,:])
-plt.plot(Xr1[at_sample,:])
-plt.plot(Xr2[at_sample,:])
-plt.plot(Xr3[at_sample,:])
-plt.plot(Xr4[at_sample,:])
-plt.grid()
-plt.title("Prediction at given sample")
+#%% Plots
+legend_loc = 'upper right'
+t1 = dt*np.arange(step+1)
+t2 = dt*np.arange(step+2)
 
-plt.figure(3)
-ax = plt.subplot(211)
-# ax.plot(Xr3[at_sample,:], label='th_ref_atsamp')
-ax.plot(SOLVED, label='solved')
-ax.plot(xr3, label='th_ref')
-# ax.plot(xr2, label='y_ref')
-# ax.plot(xr1, label='x_ref')
-ax.plot(xf[:,1], label='d')#, marker='o')
-ax.plot(Alat, label='a_lat')
-ax.legend()
-plt.subplot(212)
-plt.plot(U2p[at_sample,:,0])
-plt.plot()
-
-# Plot the results
+# Track and trajectory plot
 plt.figure(1)
 plt.clf()
-# plt.subplot(211)
-plt.plot(x1_opt, x2_opt)#, marker='o')
-# plt.plot(xr1, xr2)#, marker='o')
+ax1 = plt.gca()
 utils.draw_track(track.track, 6)
-plt.title("Solution: Gauss-Newton SQP")
-plt.xlabel('time')
-plt.legend(['x0 trajectory','u trajectory'])
+utils.plot_colored_line(x1_opt, x2_opt, x4_opt.squeeze(), cmap='viridis', ax=ax1)
+plt.title("Gauss-Newton SQP")
 plt.axis('equal')
-plt.xlim(-80, 100)  # Set x-axis limits from 0 to 5
-plt.ylim(-5, 105) # Set y-axis limits from -1.5 to 1.5
+plt.xlim(-80, 100)
+plt.ylim(-5, 105)
 plt.grid()
 
+# Plot relevant variables
+fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, num=2)
+ax1.plot(t2, x4_opt, label='speed')
+ax2.plot(t1, xf[:,1], label='d')
+ax2.plot([t1[0],t1[-1]],[-3, -3],'r--',linewidth=1)
+ax2.plot([t1[0],t1[-1]],[ 3,  3],'r--',linewidth=1)
+ax3.plot(t1, Alat, label='a_lat')
+ax3.plot([t1[0],t1[-1]],[-3, -3],'r--',linewidth=1)
+ax3.plot([t1[0],t1[-1]],[ 3,  3],'r--',linewidth=1)
+ax4.plot(t1, SOLVED, label='solved')
+for ax in (ax1, ax2, ax3, ax4):
+    ax.legend(loc=legend_loc)
+    ax.grid(True)
 
-# ax = plt.gca()
 
-plt.figure(5)
-plt.title("control inputs")
-plt.plot(u1_opt)
-plt.plot(u2_opt)
+# Control input plots
+fig, (ax1, ax2) = plt.subplots(2, 1, num=3)
+fig.suptitle("control inputs")
+ax1.plot(t1, u1_opt, label='acceleration')
+ax1.grid(True)
+ax1.legend(loc=legend_loc)
+ax2.plot(t1, u2_opt, label='steering angle')
+ax2.grid(True)
+ax2.legend(loc=legend_loc)
+
+
+# Show prediction
+plt.figure(4)
+at_sample = 470
+plt.plot(Xr1[at_sample,:], label='x_ref')
+plt.plot(Xr2[at_sample,:], label='y_ref')
+plt.plot(Xr3[at_sample,:], label='th_ref')
+plt.plot(Xr4[at_sample,:], label='v_ref')
+plt.legend(loc=legend_loc)
 plt.grid()
+plt.title("Trajectory at given sample")
+
+
 
 plt.show()

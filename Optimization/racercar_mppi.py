@@ -218,9 +218,8 @@ trajectory_artist = None
 utils.draw_track(track.track, 6)
 phi = 0
 # for step in range(475):
-for step in range(525):
+for step in range(625):
     t = step*dt
-    print(t)
 
     xx = np.vstack((x1p, x2p, x3p))
     t1 = time.perf_counter()
@@ -304,6 +303,10 @@ for step in range(525):
     vehicle_artist, trajectory_artist = utils.draw_vehicle_and_trajectory(ax, x[0], x[1], x[2], Xp, vehicle_artist=vehicle_artist, trajectory_artist=trajectory_artist)
 
     plt.pause(0.01)  # brief pause for animation
+
+    if xref[5,0] >= track.track[-2,4]:
+        print("FINISHED! Lap time: ", dt*step)
+        break
 
 
 end_time = time.perf_counter()
