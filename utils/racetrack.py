@@ -10,7 +10,7 @@ import random
 
 class RaceTrack:
 
-    def __init__(self, shape='circuit'):
+    def __init__(self, shape='circuit', seed = None):
 
         if shape == 'square':
             self.track = self.create_square()
@@ -19,20 +19,25 @@ class RaceTrack:
         if shape == 'random':
             self.track = None
 
+        if seed is None:
+            seed = 432
+        self.rng = random.Random(seed)
+
     def create_square(self):
 
         x  = 0
         y  = 100
         th = 0
         k = 0
-        X  = [[x,y,th,k]]
+        s = 0
+        X  = [[x,y,th,k,s]]
 
         steps_list = [60,    63, 120,    63, 120,    63, 120,    63, 58]
         curv_list  = [ 0, -1/20,   0, -1/20,   0, -1/20,   0, -1/20,  0]
 
         for steps, k in zip(steps_list, curv_list):
-            X += self.create_segment(x, y, th, k, steps)
-            x, y, th, _ = X[-1]
+            X += self.create_segment(x, y, th, k, s, steps)
+            x, y, th, _, s = X[-1]
 
         return np.asarray(X)
 
@@ -42,14 +47,15 @@ class RaceTrack:
         y  = 100
         th = 0
         k = 0
-        X  = [[x,y,th,k]]
+        s = 0
+        X  = [[x,y,th,k,s]]
 
         steps_list = [60,    63,   63,    63, 40,    63, 60,    63, 30,   95, 30,   126, 120,    63, 60]
         curv_list  = [ 0, -1/20, 1/20, -1/20,  0, -1/20,  0, -1/20,  0, 1/15,  0, -1/20,   0, -1/20,  0]
 
         for steps, k in zip(steps_list, curv_list):
-            X += self.create_segment(x, y, th, k, steps)
-            x, y, th, _ = X[-1]
+            X += self.create_segment(x, y, th, k, s, steps)
+            x, y, th, _, s = X[-1]
 
         return np.asarray(X)
 
@@ -66,19 +72,20 @@ class RaceTrack:
             y  = 0
             th = 0
             k = 0
-            X  = [[x,y,th,k]]
+            s = 0
+            X  = [[x,y,th,k,s]]
             for seg in range(num_segments):
-                seg_len = random.randint(30,95)
-                seg_type = random.randint(0,2) # 0-straight, 1-curve right, 2-curve left
-                if seg_type == 0:
-                    X += self.create_segment(x, y, th, 0, seg_len)
-                if seg_type == 1:
-                    k = random.uniform(1/100, 1/15)
-                    X += self.create_segment(x, y, th, k, seg_len)
-                if seg_type == 2:
-                    k = random.uniform(-1/15, -1/100)
-                    X += self.create_segment(x, y, th, k, seg_len)
-                x, y, th, _ = X[-1]
+                seg_len = self.rng.randint(30,95)
+                seg_type = self.rng.randint(0,2) # 0-straight, 1-curve right, 2-curve left
+                if seg_type == 0 or seg == 0:
+                    X += self.create_segment(x, y, th, 0, s, seg_len)
+                elif seg_type == 1:
+                    k = self.rng.uniform(1/100, 1/15)
+                    X += self.create_segment(x, y, th, k, s, seg_len)
+                elif seg_type == 2:
+                    k = self.rng.uniform(-1/15, -1/100)
+                    X += self.create_segment(x, y, th, k, s, seg_len)
+                x, y, th, _, s = X[-1]
 
             X = np.asarray(X)
             x, y = X[:,0], X[:,1]
@@ -89,13 +96,14 @@ class RaceTrack:
 
         return X
 
-    def create_segment(self, x, y, th, k, steps, step_size=0.5):
+    def create_segment(self, x, y, th, k, s, steps, ds=0.5):
         X = []
         for i in range(steps):
-            th += step_size*k
-            x += step_size*np.cos(th)
-            y += step_size*np.sin(th)
-            X  += [[x,y,th,k]]
+            th += ds*k
+            x += ds*np.cos(th)
+            y += ds*np.sin(th)
+            s += ds
+            X  += [[x,y,th,k,s]]
 
         return X
 
@@ -111,7 +119,7 @@ class RaceTrack:
 
 # track = RaceTrack("random")
 
-# track1 = track.create_random(10)
+# track1 = track.create_random(20)
 # plt.plot(track1[:,0], track1[:,1])
 # plt.axis('equal')
 # plt.show()
