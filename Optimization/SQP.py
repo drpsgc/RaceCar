@@ -43,8 +43,11 @@ class SQP:
         self.gmax = None
 
         # sizes
-        self.nvar = 6
-        self.nv = 2*self.N + 4*(self.N+1)
+        self.nx = 4
+        self.nu = 2
+        self.ns = 2 # number of slacks
+        self.nvar = self.nx + self.nu + self.ns
+        self.nv = self.nu*self.N + self.nx*(self.N+1) + self.ns*(self.N+1)
 
         # Build solver
         self.build_solver()
@@ -58,8 +61,8 @@ class SQP:
     
     def build_solver(self):
         # Declare variables (use scalar graph)
-        u  = SX.sym("u",2)    # control
-        x  = SX.sym("x",4)  # states
+        u  = SX.sym("u",self.nu)    # control
+        x  = SX.sym("x",self.nx)  # states
         curv = SX.sym("k",1) # curvature
         reg = SX.sym("reg",1) # regularization factor
 
@@ -73,8 +76,8 @@ class SQP:
         f = Function('f',[x,u,curv],[xdot])
 
         # RK4 with M steps
-        U = SX.sym("U",2)
-        X = SX.sym("X",4)
+        U = SX.sym("U",self.nu)
+        X = SX.sym("X",self.nx)
         K = SX.sym("K",1)
         DT = self.T/(self.N*self.M)
         XF = X
@@ -92,11 +95,13 @@ class SQP:
         xref = SX.sym("x0", 6, self.N + 1)
 
         # Get the state for each shooting interval
-        xk = [v[self.nvar*k : self.nvar*k + 4] for k in range(self.N+1)]
+        xk = [v[self.nvar*k : self.nvar*k + self.nx] for k in range(self.N+1)]
+
+        # Get the slacks for each shooting interval
+        sk = [v[self.nvar*k + self.nx : self.nvar*k + (self.nx + self.ns)] for k in range(self.N+1)]
 
         # Get the control for each shooting interval
-        uk = [v[self.nvar*k + 4 : self.nvar*k + 6] for k in range(self.N)]
-
+        uk = [v[self.nvar*k + (self.nx + self.ns) : self.nvar*k + (self.nx + self.ns + self.nu)] for k in range(self.N)]
 
         # Variable bounds
         self.vmin = -inf*ones(self.nv)
@@ -125,23 +130,28 @@ class SQP:
             self.gmax += [0, 0, 0, 0]
 
             # Input constraints
-            self.vmin[self.nvar*k + 4 : self.nvar*k + 6] = [-3, -np.pi/5]
-            self.vmax[self.nvar*k + 4 : self.nvar*k + 6] = [ 3,  np.pi/5]
+            self.vmin[self.nvar*k + self.nx + self.ns : self.nvar*k + self.nx + self.ns + self.nu] = [-3, -np.pi/5]
+            self.vmax[self.nvar*k + self.nx + self.ns : self.nvar*k + self.nx + self.ns + self.nu] = [ 3,  np.pi/5]
 
-            # State constraints
-            # max lateral distance
-            self.vmax[self.nvar*k + 1] =  3
-            self.vmin[self.nvar*k + 1] = -3
+            g.append( xk[k][1] - sk[k][0] )
+            self.gmin += [-inf]
+            self.gmax += [3]
+            g.append( xk[k][1] + sk[k][0] )
+            self.gmin += [-3]
+            self.gmax += [inf]
             
             # max speed
             self.vmax[self.nvar*k + 3] =  20
 
             # maximum lateral acceleration
-            g.append( (tan(uk[k][1])/L)*xk[k][3]**2 )
-            self.gmin += [-3]
+            g.append( (tan(uk[k][1])/L)*xk[k][3]**2 - sk[k][1] )
+            self.gmin += [-inf]
             self.gmax += [3]
+            g.append( (tan(uk[k][1])/L)*xk[k][3]**2 + sk[k][1] )
+            self.gmin += [-3]
+            self.gmax += [inf]
 
-            J += (xk[k] - xref[0:4, k]).T @ (Q * (xk[k] - xref[0:4, k])) + uk[k].T @ (R * uk[k]) + q[3] * xk[k][0]#xk[k][3]*cos(xk[k][2] - xref[2,k])
+            J += (xk[k] - xref[0:4, k]).T @ (Q * (xk[k] - xref[0:4, k])) + uk[k].T @ (R * uk[k]) + 3e1*sk[k].T @ sk[k] + q[3] * xk[k][0]#xk[k][3]*cos(xk[k][2] - xref[2,k])
 
         # Cost function
         self.J_fcn = Function('J_fcn', [v, xref], [J])
@@ -188,7 +198,7 @@ class SQP:
 
         # calculate state in frenet frame [s, d, th-th_path, v]
         x = x_c.copy()
-        dth = x_c[2] - xref[2,0]
+        dth = atan2(sin(x_c[2] - xref[2,0]), cos(x_c[2] - xref[2,0])) # correct for angle wrap
         x[0] = 0
         x[1] = -(x_c[0] - xref[0,0])*sin(xref[2,0]) + (x_c[1] - xref[1,0])*cos(xref[2,0])
         x[2] = dth

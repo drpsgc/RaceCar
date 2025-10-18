@@ -44,16 +44,19 @@ def rollout(x0, U, dt):
 params = {
     "N": 50,
     "T": 5,
-    "Q": [0., 0.0, 0.00, 0.],
-    "q": [0., 0., 0., -1.0],
+    "Q": [0., 0., 0, 0.],
+    "q": [0., 0., 0., -2.0],
     "R": [1, 200],
     "max_iter": 1
 }
 
-nvar = 6
-nv = 2*params["N"] + 4*(params["N"]+1)
+nx = 4
+nu = 2
+ns = 2
+nvar = nx + nu + ns
+nv = nu*params["N"] + nx*(params["N"]+1) + ns*(params["N"]+1) # nu, nx, ns
 v0 = zeros(nv)
-v0[0::6] = 0.5*(np.arange(params["N"]+1))
+v0[0::nvar] = 0.5*(np.arange(params["N"]+1))
 sqp = SQP(params)
 
 start_time = time.perf_counter()
@@ -72,7 +75,7 @@ u0 = np.zeros((2,1))
 v0[0:4] = x0.flatten()
 for k in range(1,params["N"]+1):
     x0 = sim(x0,u0)
-    v0[6*k:6*k+4] = x0.flatten()
+    v0[nvar*k : nvar*k + 4] = x0.flatten()
 # v0[2::nvar] = x0[2]
 # v0[3::nvar] = x0[3]
 v_opt = v0
@@ -96,6 +99,7 @@ SOLVED = []
 U = []
 Alat = []
 idx0 = 0
+T = []
 
 fig, ax = plt.subplots()
 ax.set_aspect('equal')
@@ -103,40 +107,36 @@ vehicle_artist = None
 trajectory_artist = None
 utils.draw_track(track.track, 6)
 # for step in range(950):
-for step in range(475):
+for step in range(675):
     t = step*dt
-    print(t)
+    # print(t)
 
     xx = horzcat(x1p, x2p, x3p).T
-    t1 = time.perf_counter()
 
     xref = utils.get_ref_race_frenet(xx.full(), params["N"]+1, track.track, idx0)
-    t2 = time.perf_counter()
-    # print(xref[:,1:5])
-    # t1 = time.perf_counter()
 
+    t1 = time.perf_counter()
     v_opt, solved, x_ref = sqp.solve(x, v_opt, xref)
+    t2 = time.perf_counter()
     
     # Have to modify this by converting from prediction to x,y or rolling out input
     # x1p = v_opt[0::nvar] #+ x[0]
     # x2p = v_opt[1::nvar] #+ x[1]
     # x3p = v_opt[2::nvar] #+ x[2]
-    u1p = v_opt[4::nvar]
-    u2p = v_opt[5::nvar]
+    u1p = v_opt[nx + ns::nvar]
+    u2p = v_opt[nx + ns + 1::nvar]
     up = np.array(horzcat(u1p, u2p).T)
     Xp = rollout(x, up, dt)
     x1p = Xp[0,:] #+ x[0]
     x2p = Xp[1,:] #+ x[1]
     x3p = Xp[2,:] #+ x[2]
-    
-
-    # t2 = time.perf_counter()
 
     elapsed_time = t2 - t1
+    T += [elapsed_time]
     print("solve time: ", elapsed_time)
 
     xf += [v_opt[0:4]]
-    u = np.array(v_opt[4:6])
+    u = np.array(v_opt[nx+ns:nx+ns+nu])
     a_lat = x[3]**2*( 1/L*tan(u[1]))
     Alat += [a_lat]
     
@@ -162,13 +162,8 @@ for step in range(475):
     plt.pause(0.01)  # brief pause for animation
 
 
-end_time = time.perf_counter()
-
-elapsed_time = end_time - start_time
-
-
-print("Time: ", elapsed_time)
-
+print("max time: ", max(T))
+print("mean time: ", mean(T))
 # Retrieve the solution
 X = np.asarray(X)
 U = np.asarray(U)
@@ -203,18 +198,21 @@ plt.title("speed")
 
 # Show prediction
 plt.figure(2)
-at_sample = 5
+at_sample = 475
 # plt.plot(X1p[at_sample,:,0], X2p[at_sample,:,0])
 # plt.plot(Xr1[at_sample,:], Xr2[at_sample,:])
-plt.plot(X2p[at_sample,:])
+# plt.plot(X2p[at_sample,:])
+plt.plot(Xr1[at_sample,:])
 plt.plot(Xr2[at_sample,:])
+plt.plot(Xr3[at_sample,:])
+plt.plot(Xr4[at_sample,:])
 plt.grid()
 plt.title("Prediction at given sample")
 
 plt.figure(3)
 ax = plt.subplot(211)
 # ax.plot(Xr3[at_sample,:], label='th_ref_atsamp')
-# ax.plot(SOLVED, label='solved')
+ax.plot(SOLVED, label='solved')
 ax.plot(xr3, label='th_ref')
 # ax.plot(xr2, label='y_ref')
 # ax.plot(xr1, label='x_ref')
