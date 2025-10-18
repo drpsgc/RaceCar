@@ -26,9 +26,12 @@ class Racecar:
         self.L = 3
         self.x0 = x0
         self.x = x0
-        self.max_d = 1.5 # max tolerated lateral error (normalized), if exceeded episode terminates
+        self.max_d = 4.5 # max tolerated lateral error, if exceeded episode terminates
         self.steps = 0
         self.dt = 0.05;
+        self.track_len = None
+        self.max_time = None
+        self.mean_speed_min = 7
         
         # Random track generator
         self.track_generator = racetrack.RaceTrack("random")
@@ -138,17 +141,17 @@ class Racecar:
         state of the vehicle (for debug/plots)
         """
         self.x = self.sim(self.x, u)
-        obs = self.get_observation()
+        obs, obs_unscaled = self.get_observation()
         reward = self.get_reward(obs, u)
         terminal = False
-        if abs(obs[1]) > self.max_d:
+        if abs(obs_unscaled[1]) > self.max_d:
             reward += -2
             terminal = True
-        if obs[0] > self.tracks[-1][-5,4]/100.0: # reach (a little bit before) end of track
-            reward += 2
+        if obs_unscaled[0] > self.track_len-2: # reach (a little bit before) end of track
+            reward += 2. + 5.*(self.max_time - obs_unscaled[10])/self.max_time # higher reward if more time left
             terminal = True
-        if self.dt*self.steps > self.tracks[-1][-1,4] / 5.0: # if end is not reached in time with 5 mps average speed
-            reward += -1
+        if self.dt*self.steps > self.max_time: # if end is not reached in time with min mean speed average speed
+            reward += -1 - 2*(self.track_len - obs_unscaled[0])/self.track_len # more penalty if not driven far
             terminal = True
         
         self.steps = self.steps + 1;
@@ -160,11 +163,13 @@ class Racecar:
             self.tracks += [self.create_track()]
         self.x = self.x0
         self.steps = 0
-        return self.get_observation()
+        return self.get_observation()[0]
     
     def create_track(self):
         # track = np.asarray(self.track_generator.create_segment(0, 0, 0, 0, 0, steps=2000, ds=0.5))#
         track = np.asarray(self.track_generator.create_random(20))
+        self.track_len = track[-1,4]
+        self.max_time = self.track_len / self.mean_speed_min # Maximum time assuming mean speed min
         
         # Calculate s-coordinate
         # ds = np.linalg.norm(np.diff(track[:,0:2], axis=0), axis=1)
@@ -178,9 +183,9 @@ class Racecar:
         
         xref = utils.get_ref_race_frenet(self.x, 1, self.tracks[-1], 0)
         
-        xscale = np.array([[100],[3],[1],[15],[1],[1],[1],[1],[1],[1]])
+        xscale = np.array([[100],[3],[1],[15],[1],[1],[1],[1],[1],[1],[self.max_time]])
         # calculate state in frenet frame [s, d, th-th_path, v]
-        x = np.zeros((10,1))
+        x = np.zeros((11,1))
         dth = self.x[2] - xref[2,0]
         x[0] = xref[5,0]
         x[1] = -(self.x[0] - xref[0,0])*np.sin(xref[2,0]) + (self.x[1] - xref[1,0])*np.cos(xref[2,0])
@@ -196,23 +201,24 @@ class Racecar:
         
         for i in range(4,10):
             x[i] = k[i-4]
+        x[10] = self.dt * self.steps # time driven this episode
         
-        x /= xscale
+        obs = x/xscale # scale observation
 
-        return x
+        return obs, x
             
 
 ###
 
 TRAIN = False
-LOAD_MODEL = not TRAIN#True
+LOAD_MODEL = True#not TRAIN#True
 WEIGHTS_FILE = 'SAC_race4.pt'
 WEIGHTS_FILE_SAVE = 'SAC_race4.pt'
 
 # RL agent
 agent_parameters = {
     'network_config': {
-        'state_dim': 10,
+        'state_dim': 11,
         'num_hidden_units': [256, 256],
         'num_actions': 2
     },
@@ -295,11 +301,11 @@ while episode < num_episodes:
 
 xx = np.asarray(X[-1])
 uu = np.asarray(U[-1])
-rr = np.asarray(R[-1])
+# rr = np.asarray(R[-1])
 print(u, " ", x, " ", r)
 print("---")
 print(obs)
-
+#%%
 print("")
 if TRAIN:
     agent.save_checkpoint(WEIGHTS_FILE_SAVE)
@@ -337,5 +343,7 @@ plt.title("Losses")
         # r_steer = -0.015 * (delta**2)
         # lat_accel = ((15.0*v)**2 / self.L) * np.tan(delta)
         # a_lat_penalty = -0.03 *  F.softplus(torch.abs(torch.tensor(lat_accel)) - 3.0, beta=3) 
-        # Trained for 300 episodes. Fi
+        # Trained for 300 episodes.
+# SAC4: Added additional rewards on episode end: if finished reward extra on time left. If timeout penalize more if not driven far
+        # Added unscaled obs output to calculate rewards on physical quantities more easily
     
