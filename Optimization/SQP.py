@@ -92,7 +92,7 @@ class SQP:
 
         # Formulate NLP (use matrix graph)
         v = SX.sym("v", self.nv)
-        xref = SX.sym("x0", 5, self.N + 1)
+        xref = SX.sym("x0", 6, self.N + 1)
 
         # Get the state for each shooting interval
         xk = [v[self.nvar*k : self.nvar*k + self.nx] for k in range(self.N+1)]
@@ -168,7 +168,7 @@ class SQP:
         self.Jac_g_fcn = Function('J_g_fcn', [v, xref], [jacobian(g, v), g])
 
         # Dummy xref
-        x_ref = np.zeros((5, self.N + 1))
+        x_ref = np.zeros((6, self.N + 1))
 
         # Form quadratic approximation of constraints
         Jac_g = self.Jac_g_fcn(DM(v0), x_ref)

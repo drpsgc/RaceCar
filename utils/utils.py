@@ -98,9 +98,13 @@ def proj_to_path(x, path, idx0):
     if d_pre < d_post:
         p1 = path[idx-1, 0:2]
         p2 = path[idx, 0:2]
+        s1 = path[idx-1, 4]
+        s2 = path[idx, 4]
     else:
         p1 = path[idx, 0:2]
         p2 = path[idx+1, 0:2]
+        s1 = path[idx, 4]
+        s2 = path[idx+1, 4]
         idx = idx+1
 
     v1 = p2 - p1
@@ -109,8 +113,10 @@ def proj_to_path(x, path, idx0):
     norm_v1 = np.linalg.norm(v1)
     proj = (v1.T @ v2) / norm_v1
     proj = max(min(proj, norm_v1),0)
+    xy = p1 + proj*v1/norm_v1
+    s  = s1 + proj#*(s2-s1)
     
-    return p1 + proj*v1/norm_v1, idx
+    return xy, s, idx
     # return p2, idx
 
 def next_path_point(x, path):
@@ -161,15 +167,17 @@ def get_ref_race(X, N, TRACK):
     return ref
 
 def get_ref_race_frenet(X, N, TRACK, idx0):
-
+    # Track's state is [x,y,th,k,s]
+    # ref is [x,y,th(idx),v,k(idx),s] x,y,s are interpolated
     N = X.shape[1]
-    ref = np.zeros((5,N)) # [x,y,theta,v,k]
+    ref = np.zeros((6,N))
     for i in range(N):
         # Propagate state
         x = X[:,i:i+1]# + ca.vertcat(0.1*np.cos(X[2,i]), 0.1*np.sin(X[2,i]),0)
-        ref[0:2, i],idx = proj_to_path(x, TRACK, 0)
+        ref[0:2, i], s, idx = proj_to_path(x, TRACK, 0)
         ref[2, i] = TRACK[idx,2]# if abs(TRACK[idx,2] - x[2]) < abs(TRACK[idx,2] + 2*np.pi - x[2]) else TRACK[idx,2] + 2*np.pi   
         ref[4, i] = TRACK[idx,3]
+        ref[5, i] = s
         idx0 = idx # start search from current
         # ref[0:2, i] = next_path_point(X[:, i], TRACK)
     ref[3,:] = 10
@@ -235,13 +243,14 @@ def draw_vehicle_and_trajectory(ax, x, y, heading, future_states,
         vehicle_artist.set_transform(transform + ax.transData)
 
     # Update trajectory
-    traj_x = future_states[0, :]
-    traj_y = future_states[1, :]
+    if future_states is not None:
+        traj_x = future_states[0, :]
+        traj_y = future_states[1, :]
 
-    if trajectory_artist is None:
-        trajectory_artist, = ax.plot(traj_x, traj_y, linewidth=1.5, zorder=5)
-    else:
-        trajectory_artist.set_data(traj_x, traj_y)
+        if trajectory_artist is None:
+            trajectory_artist, = ax.plot(traj_x, traj_y, linewidth=1.5, zorder=5)
+        else:
+            trajectory_artist.set_data(traj_x, traj_y)
 
     return vehicle_artist, trajectory_artist
 
