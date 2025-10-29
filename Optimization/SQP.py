@@ -6,17 +6,8 @@ Created on Thu Sep 25 18:00:50 2025
 @author: psgc
 """
 
-from casadi import *
-from numpy import *
-
-# Hacky way to import utilities
-import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'utils')))
-
-import utils
-import racetrack
-
+import casadi as ca
+import numpy as np
 
 class SQP:
 
@@ -25,74 +16,65 @@ class SQP:
         self.N = param.get("N", 100) # Horizon samples
         self.T = param.get("T", 10) # Time horizon
         self.M = param.get("M", 1) # Number of discretization steps per timestep
-        self.Q = param.get("Q")
-        self.q = param.get("q")
-        self.R = param.get("R")
-        self.N_iter = param.get("max_iter", 25) # SQP iterations per time step
+        self.Q = param.get("Q") # Cost (x-xref)'Q(x-xref)
+        self.q = param.get("q") # Cost q'x
+        self.R = param.get("R") # Cost u'Ru
+        self.N_iter = param.get("max_iter", 5) # SQP iterations per time step
 
-        self.J_fcn = None
-        self.g_fcn = None
-        self.Jac_g_fcn = None 
-        self.Jac_J_fcn = None
-        self.Hess_J_fcn = None
-        self.solver = None
+        self.J_fcn = None # Casadi cost function
+        self.Jac_g_fcn = None # Jacobian/function of constraints
+        self.Hess_J_fcn = None # Hessian/Jacobian of cost function
+        self.solver = None # Conic QP solver
 
-        self.vmin = None
-        self.vmax = None
-        self.gmin = None
-        self.gmax = None
+        self.vmin = None # Lower bounds on decision variables
+        self.vmax = None # Upper bounds on decision variables
+        self.gmin = None # Lower bounds for g
+        self.gmax = None # Upper bounda for g
 
         # sizes
-        self.nx = 4
-        self.nu = 2
+        self.nx = 4 # number of states
+        self.nu = 2 # number of inputs
         self.ns = 2 # number of slacks
-        self.nvar = self.nx + self.nu + self.ns
-        self.nv = self.nu*self.N + self.nx*(self.N+1) + self.ns*(self.N+1)
+        self.nvar = self.nx + self.nu + self.ns # number of decision variables per stage
+        self.nv = self.nu*self.N + self.nx*(self.N+1) + self.ns*(self.N+1) # Total decision variables
 
         # Build solver
         self.build_solver()
 
-        # Merit
-        self.m_old = 1e20
+        # Linea search
         self.alpha = 0.2
-        
-        # Regularization
-        self.reg = 1e-2
-    
+
     def build_solver(self):
-        # Declare variables (use scalar graph)
-        u  = SX.sym("u",self.nu)    # control
-        x  = SX.sym("x",self.nx)  # states
-        curv = SX.sym("k",1) # curvature
-        reg = SX.sym("reg",1) # regularization factor
+        # Declare variables for dynamics
+        u  = ca.SX.sym("u",self.nu)  # control
+        x  = ca.SX.sym("x",self.nx)  # states
+        curv = ca.SX.sym("k",1)      # curvature (exogenous)
 
         # System dynamics
         L = 3
-        # xdot = vertcat(x[3]*cos(x[2]), x[3]*sin(x[2]), x[3]/L*tan(u[1]), u[0])
-        xdot = vertcat(x[3]*cos(x[2])/(1-x[1]*curv), 
-                       x[3]*sin(x[2]), 
-                       x[3]/L*tan(u[1]) - (x[3]*curv*cos(x[2]))/(1-x[1]*curv), 
+        xdot = ca.vertcat(x[3]*ca.cos(x[2])/(1-x[1]*curv),
+                       x[3]*ca.sin(x[2]),
+                       x[3]/L*ca.tan(u[1]) - (x[3]*curv*ca.cos(x[2]))/(1-x[1]*curv),
                        u[0])
-        f = Function('f',[x,u,curv],[xdot])
+        f = ca.Function('f',[x,u,curv],[xdot])
 
         # RK4 with M steps
-        U = SX.sym("U",self.nu)
-        X = SX.sym("X",self.nx)
-        K = SX.sym("K",1)
+        U = ca.SX.sym("U",self.nu)
+        X = ca.SX.sym("X",self.nx)
+        K = ca.SX.sym("K",1)
         DT = self.T/(self.N*self.M)
         XF = X
-        QF = 0
         for j in range(self.M):
             k1 = f(XF,             U, K)
             k2 = f(XF + DT/2 * k1, U, K)
             k3 = f(XF + DT/2 * k2, U, K)
             k4 = f(XF + DT   * k3, U, K)
             XF += DT/6*(k1   + 2*k2   + 2*k3   + k4)
-        F = Function('F',[X,U,K],[XF])
+        F = ca.Function('F',[X,U,K],[XF])
 
-        # Formulate NLP (use matrix graph)
-        v = SX.sym("v", self.nv)
-        xref = SX.sym("x0", 6, self.N + 1)
+        # Declare variables for optimization problem
+        v = ca.SX.sym("v", self.nv)
+        xref = ca.SX.sym("x0", 6, self.N + 1) # reference (exogenous)
 
         # Get the state for each shooting interval
         xk = [v[self.nvar*k : self.nvar*k + self.nx] for k in range(self.N+1)]
@@ -104,11 +86,11 @@ class SQP:
         uk = [v[self.nvar*k + (self.nx + self.ns) : self.nvar*k + (self.nx + self.ns + self.nu)] for k in range(self.N)]
 
         # Variable bounds
-        self.vmin = -inf*ones(self.nv)
-        self.vmax =  inf*ones(self.nv)
+        self.vmin = -ca.inf*np.ones(self.nv)
+        self.vmax =  ca.inf*np.ones(self.nv)
 
         # Initial solution guess
-        v0 = zeros(self.nv)
+        v0 = np.zeros(self.nv)
 
         # Constraint function with bounds
         g = []; self.gmin = []; self.gmax = []
@@ -124,7 +106,7 @@ class SQP:
             # Call the integrator
             xf = F(xk[k], uk[k], xref[4,k])
 
-            # Append continuity constraints
+            # Add continuity constraints
             g.append(xf - xk[k+1])
             self.gmin += [0, 0, 0, 0]
             self.gmax += [0, 0, 0, 0]
@@ -133,78 +115,67 @@ class SQP:
             self.vmin[self.nvar*k + self.nx + self.ns : self.nvar*k + self.nx + self.ns + self.nu] = [-3, -np.pi/5]
             self.vmax[self.nvar*k + self.nx + self.ns : self.nvar*k + self.nx + self.ns + self.nu] = [ 3,  np.pi/5]
 
+            # max lateral offset (soft)
             g.append( xk[k][1] - sk[k][0] )
-            self.gmin += [-inf]
+            self.gmin += [-ca.inf]
             self.gmax += [3]
             g.append( xk[k][1] + sk[k][0] )
             self.gmin += [-3]
-            self.gmax += [inf]
+            self.gmax += [ca.inf]
             
             # max speed
             self.vmax[self.nvar*k + 3] =  20
 
-            # maximum lateral acceleration
-            g.append( (tan(uk[k][1])/L)*xk[k][3]**2 - sk[k][1] )
-            self.gmin += [-inf]
+            # maximum lateral acceleration (soft)
+            g.append( (ca.tan(uk[k][1])/L)*xk[k][3]**2 - sk[k][1] )
+            self.gmin += [-ca.inf]
             self.gmax += [3]
-            g.append( (tan(uk[k][1])/L)*xk[k][3]**2 + sk[k][1] )
+            g.append( (ca.tan(uk[k][1])/L)*xk[k][3]**2 + sk[k][1] )
             self.gmin += [-3]
-            self.gmax += [inf]
+            self.gmax += [ca.inf]
 
             J += (xk[k] - xref[0:4, k]).T @ (Q * (xk[k] - xref[0:4, k])) + uk[k].T @ (R * uk[k]) + 3e1*sk[k].T @ sk[k] + q[3] * xk[k][0]#xk[k][3]*cos(xk[k][2] - xref[2,k])
 
         # Cost function
-        self.J_fcn = Function('J_fcn', [v, xref], [J])
+        self.J_fcn = ca.Function('J_fcn', [v, xref], [J])
 
         # Concatenate constraints
-        g = vertcat(*g)
-        self.gmin = vertcat(*self.gmin)
-        self.gmax = vertcat(*self.gmax)
+        g = ca.vertcat(*g)
+        self.gmin = ca.vertcat(*self.gmin)
+        self.gmax = ca.vertcat(*self.gmax)
 
-        # Form function for calculating the constraints
-        self.g_fcn = Function('g_fcn',[v, xref],[g])
+        # Create function for constraints and Jacobian
+        self.Jac_g_fcn = ca.Function('J_g_fcn', [v, xref], [ca.jacobian(g, v), g])
 
-        # Generate functions for the Jacobians
-        self.Jac_g_fcn = Function('J_g_fcn', [v, xref], [jacobian(g, v), g])
+        # Hessian/Jacobian function of cost
+        self.Hess_J_fcn = ca.Function('H_J_fcn', [v, xref], ca.hessian(J, v))
 
-        # Dummy xref
-        x_ref = np.zeros((6, self.N + 1))
-
-        # Form quadratic approximation of constraints
-        Jac_g = self.Jac_g_fcn(DM(v0), x_ref)
-        J_g_k = Jac_g[0]
-
-        # Hessian/Jacobian
-        self.Jac_J_fcn = Function('J_J_fcn', [v, xref], [jacobian(J, v)])
-        self.Hess_J_fcn = Function('H_J_fcn', [v, xref], [hessian(J, v)[0]])
-
-        H_k = self.Hess_J_fcn(DM(v0), x_ref)
+        # Evalute Hessian of J and gradient of g to extract sparsity patterns
+        x_ref = np.zeros((6, self.N + 1)) # Dummy xref
+        H_k,_ = self.Hess_J_fcn(ca.DM(v0), x_ref)
+        J_g_k = self.Jac_g_fcn(ca.DM(v0), x_ref)[0]
 
         qp = {
             'h': H_k.sparsity(),
             'a': J_g_k.sparsity(),
         }
 
+        # Create solver
         opts = {'osqp':{'verbose':False, 'max_iter':2000}, 'error_on_fail': False}
-        self.solver = conic('solver', 'osqp', qp, opts)
-
-    def merit(self, v, J, g):
-        rhog = 1
-        rhov = 1
-        return J + rhov*sum((-fmin(0, v - self.vmin) + fmax(0, v - self.vmax))) + rhog*sum((-fmin(0, g - self.gmin) + fmax(0, g - self.gmax)))
+        self.solver = ca.conic('solver', 'osqp', qp, opts)
 
     def solve(self, x_c, v0, xref):
-        v_opt = DM(v0)
+        v_opt = ca.DM(v0)
 
-        # calculate state in frenet frame [s, d, th-th_path, v]
+        # calculate state in Frenet frame [s, d, th-th_path, v]
         x = x_c.copy()
-        dth = atan2(sin(x_c[2] - xref[2,0]), cos(x_c[2] - xref[2,0])) # correct for angle wrap
+        dth = np.atan2(np.sin(x_c[2] - xref[2,0]), np.cos(x_c[2] - xref[2,0])) # correct for angle wrap
         x[0] = 0
-        x[1] = -(x_c[0] - xref[0,0])*sin(xref[2,0]) + (x_c[1] - xref[1,0])*cos(xref[2,0])
+        x[1] = -(x_c[0] - xref[0,0])*np.sin(xref[2,0]) + (x_c[1] - xref[1,0])*np.cos(xref[2,0])
         x[2] = dth
         x[3] = x_c[3]
 
-        x_ref = xref.copy()# self.transformReference(x, xref)
+        x_ref = xref.copy()
         x_ref[0:2,:] = 0
         
         # Initial value
@@ -213,55 +184,32 @@ class SQP:
         self.vmin[2] = self.vmax[2] = v0[2] = x[2]
         self.vmin[3] = self.vmax[3] = v0[3] = x[3]
 
-        lam = DM(zeros_like(v0))
-        mu = DM(zeros_like(self.gmin))
+        lam = ca.DM(np.zeros_like(v0))
+        mu = ca.DM(np.zeros_like(self.gmin))
 
         for k in range(self.N_iter):
-            # Form quadratic approximation of constraints
-            Jac_g = self.Jac_g_fcn(v_opt, x_ref)
-            J_g_k = Jac_g[0]
-            g_k = Jac_g[1]
+            # Form linear approximation of constraints
+            J_g_k, g_k = self.Jac_g_fcn(v_opt, x_ref)
             
-            # Gauss-Newton Hessian
-            H_k = self.Hess_J_fcn(v_opt, x_ref)
-
-            # Gradient of the objective function
-            Grad_obj_k = self.Jac_J_fcn(v_opt, x_ref)
+            # Gauss-Newton Hessian and gradient of J
+            H_k, Grad_obj_k = self.Hess_J_fcn(v_opt, x_ref)
 
             # Bounds on delta_v
             dv_min = self.vmin - v_opt
             dv_max = self.vmax - v_opt
-            if isnan(dv_min).any() or (isnan(dv_max)).any() or (dv_max < dv_min).full().any():
+            if np.isnan(dv_min).any() or (np.isnan(dv_max)).any() or (dv_max < dv_min).full().any():
                 print("nans found")
             
             # Solve the QP
             sol = self.solver(h=H_k, g=Grad_obj_k, a=J_g_k, lbx=dv_min, ubx=dv_max, lba=self.gmin-g_k, uba=self.gmax-g_k)
-            dv, d_lam, d_mu = sol['x'], sol['lam_x'], sol['lam_a']
+            dv, lam, mu = sol['x'], sol['lam_x'], sol['lam_a']
             solved = self.solver.stats()['success']
 
-            # if max(abs(dv)) < 1e-5:
-            #     break
+            if max(np.abs(dv)) < 1e-5:
+                break
 
             # Take step with scheduled alpha
             v_opt += self.alpha*dv
-            lam = d_lam
-            mu = d_mu
             self.alpha = min([1.0,self.alpha+0.2])
 
-            # Merit-function-based line search
-            # alpha = 1 #if k > 1 else 0.2
-            # while alpha > 1e-7:
-            #     v_dv = v_opt + alpha*dv
-            #     m_new = self.merit(v_dv, self.J_fcn(v_dv, x_ref), self.g_fcn(v_dv, x_ref))
-            #     if m_new < self.m_old:
-            #         self.reg /= 10
-            #         break
-            #     alpha*= 0.5
-            # if alpha < 1e-6:
-            #     alpha = 0
-            #     self.reg *= 10
-            #     break
-            # v_opt += alpha*dv
-            # self.m_old = m_new
-
-        return v_opt, solved, x_ref
+        return v_opt.full(), solved, x_ref

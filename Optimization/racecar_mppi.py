@@ -6,8 +6,6 @@ Created on Sat Sep 27 10:53:35 2025
 @author: psgc
 """
 
-# from casadi import *
-# from numpy import *
 import numpy as np
 import matplotlib.pyplot as plt
 import time
@@ -62,7 +60,7 @@ def f_continuous(x, u, curv):
 
 @jit(nopython=True)
 def cost(x, u, r):
-    return 0.0*(x[1] - r[1])**2 - 50*x[0] + 0*u.T @ u
+    return 0.0*(x[1] - r[1])**2 - 75*x[0] + 0*u.T @ u
 
 @jit(nopython=True)
 def constraints_filter(x, u, curv):
@@ -75,18 +73,8 @@ def constraints_filter(x, u, curv):
     f1 = np.abs(x[1]) - 3
     c1 = q1*np.exp(q2*f1)
 
-    # # max lateral acceleration
-    # q1 = 100
-    # q2 = 10
-    # # f2 = abs((tan(u[1])/L)*x[3]**2) - 3
-    # f2 = abs(curv*x[3]**2) - 3
-    # c2 = q1*exp(q2*f2) if f2 > 0 else 0*f2
-
-    # f1 = abs(x[1]) - 3
-    # c1 = 100.*np.maximum(f1,0*f1)
-
+    # max lateral acceleration
     f2 = np.abs((np.tan(u[1])/L)*x[3]**2) - 3
-    # f2 = abs(curv*x[3]**2) - 3 # more conservative, but more stable
     c2 = 1000.*np.maximum(f2,0*f2)
 
     return c1 + c2
@@ -102,18 +90,9 @@ def constraints(x, u, curv):
     f1 = np.abs(x[1]) - 3
     c1 = q1*np.exp(q2*f1)
 
-    # # max lateral acceleration
-    # q1 = 100
-    # q2 = 10
-    # # f2 = abs((tan(u[1])/L)*x[3]**2) - 3
-    # f2 = abs(curv*x[3]**2) - 3
-    # c2 = q1*exp(q2*f2) if f2 > 0 else 0*f2
-
-    # f1 = abs(x[1]) - 3
-    # c1 = 100.*np.maximum(f1,0*f1)
+    # max lateral acceleration
 
     f2 = np.abs((np.tan(x[4])/L)*x[3]**2) - 3
-    # f2 = abs(curv*x[3]**2) - 3 # more conservative, but more stable
     c2 = 1000.*np.maximum(f2,0*f2)
 
     # constrain max steering
@@ -150,25 +129,25 @@ def rollout(x0, U, dt):
 params = {
     "N": 40,
     "T": 4,
-    "Q": [0., 0.0, 0.00, 0.],
-    "q": [0., 0., 0., -1.0],
-    "R": [1, 200],
-    "max_iter": 1
+    "K": 2000,
+    "Sigma": [0.5, 0.025],
 }
 
 # Choose wheter to use a,phi as input with filter or a, dph without filter
 use_filter_version = False
 
-nvar = 6
-nv = 2*100 + 4*(101)
+nx = 4
+nu = 2
+nvar = nx + nu
+nv = nu*params["N"] + 4*(params["N"]+1)
 v0 = np.zeros(nv)
-v0[0::6] = 0.5*(np.arange(101))
+v0[0::nvar] = 0.5*(np.arange(params["N"]+1))
 
 # CREATE SOLVER
 if use_filter_version:
-    mppi = MPPI(f_continuous_filter, cost, constraints_filter, use_filter=True)
+    mppi = MPPI(f_continuous_filter, cost, constraints_filter, params, use_filter=True)
 else:
-    mppi = MPPI(f_continuous, cost, constraints, use_filter=False)
+    mppi = MPPI(f_continuous, cost, constraints, params, use_filter=False)
 
 start_time = time.perf_counter()
 
@@ -179,16 +158,14 @@ dt = params["T"]/params["N"]#0.05
 L = 3
 
 x = np.array([[0.],[100.],[0],[10.]])
-# x = np.array([[-50.],[35],[-3*pi/2],[10.]])
 # propagate state with assumed 0 input to obtain v0
 x0 = x.copy()
 u0 = np.zeros((2,1))
 v0[0:4] = x0.flatten()
 for k in range(1,params["N"]+1):
     x0 = sim(x0,u0)
-    v0[6*k:6*k+4] = x0.flatten()
-# v0[2::nvar] = x0[2]
-# v0[3::nvar] = x0[3]
+    v0[nvar*k:nvar*k+nx] = x0.flatten()
+
 v_opt = v0
 x1p = v_opt[0::nvar].copy()
 x2p = v_opt[1::nvar].copy()
@@ -209,6 +186,7 @@ xf = []
 SOLVED = []
 U = []
 Alat = []
+T = []
 idx0 = 0
 
 fig, ax = plt.subplots()
@@ -218,21 +196,17 @@ trajectory_artist = None
 utils.draw_track(track.track, 6)
 phi = 0
 # for step in range(475):
-for step in range(525):
+for step in range(625):
     t = step*dt
-    print(t)
 
     xx = np.vstack((x1p, x2p, x3p))
-    t1 = time.perf_counter()
 
     xref = utils.get_ref_race_frenet(xx, params["N"]+1, track.track, idx0)
-    t2 = time.perf_counter()
-    # print(xref[:,1:5])
-    # t1 = time.perf_counter()
 
+    t1 = time.perf_counter()
     # Calculate state and ref in frenet frame
     if use_filter_version:
-        x_frenet = np.zeros((4,1))#x.copy()
+        x_frenet = np.zeros((4,1))
         dth = x[2] - xref[2,0]
         x_frenet[0] = 0
         x_frenet[1] = -(x[0] - xref[0,0])*np.sin(xref[2,0]) + (x[1] - xref[1,0])*np.cos(xref[2,0])
@@ -246,7 +220,7 @@ for step in range(525):
         u1p = up[0,:]
         u2p = up[1,:]
     else:
-        x_frenet = np.zeros((5,1))#x.copy()
+        x_frenet = np.zeros((5,1))
         dth = x[2] - xref[2,0]
         x_frenet[0] = 0
         x_frenet[1] = -(x[0] - xref[0,0])*np.sin(xref[2,0]) + (x[1] - xref[1,0])*np.cos(xref[2,0])
@@ -259,10 +233,15 @@ for step in range(525):
         u, up, Xpf = mppi.solve(x_frenet, x_ref)
 
         u1p = up[0,:]
-        u2p = Xpf[4,1:] #up[1,:] # input to "real" system is steering angle
+        u2p = Xpf[4,1:] # input to "real" system is steering angle
         up = np.vstack((u1p,u2p))
         phi = u2p[0]
         u[1] = phi
+
+    t2 = time.perf_counter()
+    elapsed_time = t2 - t1
+    T += [elapsed_time]
+    print("solve time: ", elapsed_time)
 
     # ROLLOUT dynamics for prediction in cartesian space
     Xp = rollout(x, up, dt)
@@ -270,12 +249,6 @@ for step in range(525):
     x1p = Xp[0,:] #+ x[0]
     x2p = Xp[1,:] #+ x[1]
     x3p = Xp[2,:] #+ x[2]
-    
-
-    # t2 = time.perf_counter()
-
-    elapsed_time = t2 - t1
-    print("solve time: ", elapsed_time)
 
     xf += [Xpf[0:4,0]]
 
@@ -296,34 +269,32 @@ for step in range(525):
 
     Xr1 += [xref[0,:]]
     Xr2 += [xref[1,:]]
-    # Xr3 += [x_ref[2,:]]
-    # Xr4 += [x_ref[3,:]]
-
-    # SOLVED += [solved]
+    Xr3 += [xref[2,:]]
+    Xr4 += [xref[3,:]]
 
     vehicle_artist, trajectory_artist = utils.draw_vehicle_and_trajectory(ax, x[0], x[1], x[2], Xp, vehicle_artist=vehicle_artist, trajectory_artist=trajectory_artist)
 
     plt.pause(0.01)  # brief pause for animation
 
+    if xref[5,0] >= track.track[-5,4]:
+        print("FINISHED! Lap time: ", dt*step)
+        break
 
-end_time = time.perf_counter()
+print("max time: ", max(T))
+print("mean time: ", np.mean(T))
 
-elapsed_time = end_time - start_time
 
-
-print("Time: ", elapsed_time)
-
-# Retrieve the solution
+#%% Retrieve the solution
 X = np.asarray(X)
 U = np.asarray(U)
 Xr = np.asarray(Xr)
 X1p = np.asarray(X1p)
 X2p = np.asarray(X2p)
 U2p = np.asarray(U2p)
-# Xr1 = np.asarray(Xr1)
-# Xr2 = np.asarray(Xr2)
-# Xr3 = np.asarray(Xr3)
-# Xr4 = np.asarray(Xr4)
+Xr1 = np.asarray(Xr1)
+Xr2 = np.asarray(Xr2)
+Xr3 = np.asarray(Xr3)
+Xr4 = np.asarray(Xr4)
 xf = np.asarray(xf)
 Alat = np.asarray(Alat)
 
@@ -338,66 +309,61 @@ xr3 = Xr[:, 2]
 u1_opt = U[:, 0]
 u2_opt = U[:, 1]
 
-# print(x1_opt)
-# print(x2_opt)
-#%%
-plt.figure(4)
-plt.plot(x4_opt)
-plt.title("speed")
+#%% Plots
 
-# Show prediction
-# plt.figure(2)
-# at_sample = 5
-# # plt.plot(X1p[at_sample,:,0], X2p[at_sample,:,0])
-# # plt.plot(Xr1[at_sample,:], Xr2[at_sample,:])
-# plt.plot(X2p[at_sample,:])
-# plt.plot(Xr2[at_sample,:])
-# plt.grid()
-# plt.title("Prediction at given sample")
+legend_loc = 'upper right'
+t1 = dt*np.arange(step+1)
+t2 = dt*np.arange(step+2)
 
-plt.figure(3)
-ax = plt.subplot(211)
-# ax.plot(Xr3[at_sample,:], label='th_ref_atsamp')
-# ax.plot(SOLVED, label='solved')
-ax.plot(xr3, label='th_ref')
-# ax.plot(xr2, label='y_ref')
-# ax.plot(xr1, label='x_ref')
-ax.plot(xf[:,1], label='d')#, marker='o')
-ax.plot(Alat, label='a_lat')
-ax.legend()
-plt.subplot(212)
-# plt.plot(U2p[at_sample,:,0])
-plt.plot()
-
-# Plot the results
+# Track and trajectory plot
 plt.figure(1)
 plt.clf()
-# plt.subplot(211)
-plt.plot(x1_opt, x2_opt)#, marker='o')
-# plt.plot(xr1, xr2)#, marker='o')
+ax1 = plt.gca()
 utils.draw_track(track.track, 6)
-plt.title("Solution: Gauss-Newton SQP")
-plt.xlabel('time')
-plt.legend(['x0 trajectory','u trajectory'])
+utils.plot_colored_line(x1_opt, x2_opt, x4_opt.squeeze(), cmap='viridis', ax=ax1)
+plt.title("Gauss-Newton SQP")
 plt.axis('equal')
-plt.xlim(-80, 100)  # Set x-axis limits from 0 to 5
-plt.ylim(-5, 105) # Set y-axis limits from -1.5 to 1.5
+plt.xlim(-80, 100)
+plt.ylim(-5, 105)
 plt.grid()
 
-plt.figure(2)
-plt.plot(u1_opt)
-plt.plot(u2_opt)
-plt.title('Inputs')
+# Plot relevant variables
+fig, (ax1, ax2, ax3) = plt.subplots(3, 1, num=2)
+ax1.plot(t2, x4_opt, label='speed')
+ax2.plot(t1, xf[:,1], label='d')
+ax2.plot([t1[0],t1[-1]],[-3, -3],'r--',linewidth=1)
+ax2.plot([t1[0],t1[-1]],[ 3,  3],'r--',linewidth=1)
+ax3.plot(t1, Alat, label='a_lat')
+ax3.plot([t1[0],t1[-1]],[-3, -3],'r--',linewidth=1)
+ax3.plot([t1[0],t1[-1]],[ 3,  3],'r--',linewidth=1)
+for ax in (ax1, ax2, ax3):
+    ax.legend(loc=legend_loc)
+    ax.grid(True)
 
-# ax = plt.gca()
 
-# T = 10
-# N = 100
-# plt.subplot(212)
-# plt.title("SQP solver output")
-# plt.plot(u1_opt)
-# plt.plot(u2_opt)
-# plt.xlabel('iteration')
-# plt.grid()
+# Control input plots
+fig, (ax1, ax2) = plt.subplots(2, 1, num=3)
+fig.suptitle("control inputs")
+ax1.plot(t1, u1_opt, label='acceleration')
+ax1.grid(True)
+ax1.legend(loc=legend_loc)
+ax2.plot(t1, u2_opt, label='steering angle')
+ax2.grid(True)
+ax2.legend(loc=legend_loc)
+
+
+# Show prediction
+plt.figure(4)
+at_sample = 470
+plt.plot(Xr1[at_sample,:], label='x_ref')
+plt.plot(Xr2[at_sample,:], label='y_ref')
+plt.plot(Xr3[at_sample,:], label='th_ref')
+plt.plot(Xr4[at_sample,:], label='v_ref')
+plt.legend(loc=legend_loc)
+plt.grid()
+plt.title("Trajectory at given sample")
+
+
 
 plt.show()
+
