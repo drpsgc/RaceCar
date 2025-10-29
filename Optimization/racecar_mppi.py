@@ -200,11 +200,9 @@ for step in range(625):
     t = step*dt
 
     xx = np.vstack((x1p, x2p, x3p))
-    
 
     xref = utils.get_ref_race_frenet(xx, params["N"]+1, track.track, idx0)
-    print(xref.shape)
-    
+
     t1 = time.perf_counter()
     # Calculate state and ref in frenet frame
     if use_filter_version:
