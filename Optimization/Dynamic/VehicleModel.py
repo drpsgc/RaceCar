@@ -28,8 +28,8 @@ def DynVehicleModel(state, u):
     Car_ = 25.
     muf = 0.9
     mur = 1.03
-    Cd0 = 0*218.
-    Cd2 = 0*0.4243
+    Cd0 = 218.
+    Cd2 = 0.4243
     g = 9.81
     
     # Assume no load transfer

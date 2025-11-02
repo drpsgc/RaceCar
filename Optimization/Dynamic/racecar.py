@@ -7,7 +7,7 @@ from VehicleModel import DynVehicleModel
 # Hacky way to import utilities
 import sys
 import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'utils')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..', 'utils')))
 
 import utils
 from racetrack import RaceTrack
@@ -42,17 +42,20 @@ def rollout(x0, U, dt):
 
 params = {
     "N": 50,
-    "T": 2.5,
-    "Q": [0.1, 10, 10, 0.1, 1, 0.1],
-    "q": [0., 0., 0., -1.5, 0., 0.],
-    "R": [1, 200],
+    "T": 5,
+    "Q": [0., 0.0, 0, 0.05, 0, 0.0],
+    "P": [0., 0.0, 0., 0.1, 0, 0.0],
+    "q": [0., 0., 0., -0.4, 0., 0.],
+    "R": [0.01, 175],
     "max_iter": 1,
+    "Hess_approx": "GN",
+    "disc_method": "rk4",
     "M": 1
 }
 
 nx = 6
 nu = 2
-ns = 1
+ns = 3
 nvar = nx + nu + ns
 nv = nu*params["N"] + nx*(params["N"]+1) + ns*(params["N"]+1) # nu, nx, ns
 v0 = np.zeros(nv)
@@ -81,6 +84,7 @@ x2p = v_opt[1::nvar].copy()
 x3p = v_opt[2::nvar].copy()
 v_opt[1::nvar] = 0
 v_opt[2::nvar] = 0
+mu = np.zeros_like(sqp.gmin)
 X = [x]
 Xr = []
 X1p = []
@@ -105,7 +109,7 @@ vehicle_artist = None
 trajectory_artist = None
 utils.draw_track(track.track, 6)
 
-for step in range(475):
+for step in range(450):
     t = step*dt
 
     # x,y,theta trajectory in global coordinates
@@ -114,7 +118,7 @@ for step in range(475):
     xref = utils.get_ref_race_frenet(xx, params["N"]+1, track.track, idx0)
 
     t1 = time.perf_counter()
-    v_opt, solved, x_ref = sqp.solve(x, v_opt, xref)
+    v_opt, solved, mu, x_ref = sqp.solve(x, v_opt, mu, xref)
     t2 = time.perf_counter()
     
     # Prediction from SQP is in Frenet frame
@@ -162,9 +166,9 @@ for step in range(475):
     vehicle_artist, trajectory_artist = utils.draw_vehicle_and_trajectory(ax, x[0], x[1], x[2], Xp, vehicle_artist=vehicle_artist, trajectory_artist=trajectory_artist)
 
     plt.pause(0.01)  # brief pause for animation
-    if xref[5,0] >= track.track[-2,4]:
+    if xref[5,0] >= track.track[-5,4]:
         print("FINISHED! Lap time: ", dt*step)
-        # break
+        break
 
 
 print("max time: ", max(T))
@@ -231,16 +235,20 @@ for ax in (ax1, ax2, ax3, ax4):
 fig, (ax1, ax2) = plt.subplots(2, 1, num=3)
 fig.suptitle("control inputs")
 ax1.plot(t1, u1_opt, label='acceleration')
+ax1.plot([t1[0],t1[-1]],[-5000, -5000],'r--',linewidth=1)
+ax1.plot([t1[0],t1[-1]],[ 5000,  5000],'r--',linewidth=1)
 ax1.grid(True)
 ax1.legend(loc=legend_loc)
 ax2.plot(t1, u2_opt, label='steering angle')
+ax2.plot([t1[0],t1[-1]],[-np.pi/5, -np.pi/5],'r--',linewidth=1)
+ax2.plot([t1[0],t1[-1]],[ np.pi/5,  np.pi/5],'r--',linewidth=1)
 ax2.grid(True)
 ax2.legend(loc=legend_loc)
 
 
 # Show prediction
 plt.figure(4)
-at_sample = 470
+at_sample = step - 5
 plt.plot(Xr1[at_sample,:], label='x_ref')
 plt.plot(Xr2[at_sample,:], label='y_ref')
 plt.plot(Xr3[at_sample,:], label='th_ref')
