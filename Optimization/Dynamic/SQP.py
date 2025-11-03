@@ -232,7 +232,7 @@ class SQP:
         self.gmax = ca.vertcat(*self.gmax)
 
         # Create function for constraints and Jacobian
-        self.Jac_g_fcn = ca.Function('J_g_fcn', [v, xref], [ca.jacobian(g, v), g])
+        self.Jac_g_fcn = ca.Function('J_g_fcn', [v, xref], [ca.jacobian(g, v), g],{'jit': True})
 
         # Create Lagrangian function
         ng = g.shape[0]
@@ -243,11 +243,11 @@ class SQP:
             L = J + mu.T @ g
             HL_, _ = ca.hessian(L, v)
             HL = ca.convexify(HL_, {'strategy':'eigen-reflect'})
-            self.Hess_L_fcn = ca.Function('H_L_fcn', [v, mu, xref], [HL])
+            self.Hess_L_fcn = ca.Function('H_L_fcn', [v, mu, xref], [HL],{'jit': True})
         elif self.Hess_approx == "GN":
             L = J
-            self.Hess_L_fcn = ca.Function('H_L_fcn', [v, mu, xref], [ca.hessian(L, v)[0]])
-        self.grad_J_fcn = ca.Function('grad_J_fcn', [v, xref], [ca.jacobian(J, v)])
+            self.Hess_L_fcn = ca.Function('H_L_fcn', [v, mu, xref], [ca.hessian(L, v)[0]],{'jit': True})
+        self.grad_J_fcn = ca.Function('grad_J_fcn', [v, xref], [ca.jacobian(J, v)],{'jit': True})
 
         # Evalute Hessian of L and gradient of g to extract sparsity patterns
         x_ref = np.zeros((7, self.N + 1)) # Dummy xref
