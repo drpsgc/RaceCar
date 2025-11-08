@@ -122,6 +122,37 @@ def get_ref_race_frenet(X, N, TRACK, idx0):
 
     return ref
 
+def get_traj_xy1(d, th, ref):
+    # Converts trajectory from d,th to x,y,th given a reference
+    # ref is [x,y,th(idx),v,k(idx),s]
+
+    traj = ref[0:3].copy()
+    for i in range(1,ref.shape[1]):
+        traj[0,i] = ref[0,i] - d[i]*np.sin(ref[2,i])
+        traj[1,i] = ref[1,i] + d[i]*np.cos(ref[2,i])
+    traj[2,:] = th.squeeze()
+    return traj
+
+def get_traj_xy(s, d, th, track, x):
+    _, s0, _ = proj_to_path(x, track, 0)
+    smax = track[-1,4]
+    s = [(si + s0)%smax  for si in s]
+    th = th.squeeze()
+    indices = np.searchsorted(track[:,4], s, side='left') # return first "greater than" index
+    N = indices.shape[0]
+    Nt = track.shape[0]
+
+    x = np.zeros(N)
+    y = np.zeros(N)
+    for i in range(N):
+        idx = min(indices[i],Nt-1)
+        frac = (s[i]-track[idx-1,4])/(track[idx,4]-track[idx-1,4])
+
+        thp  = (1-frac)*track[idx-1,2] + frac*track[idx,2]
+        x[i] = (1-frac)*track[idx-1,0] + frac*track[idx,0] - d[i]*np.sin(thp)
+        y[i] = (1-frac)*track[idx-1,1] + frac*track[idx,1] + d[i]*np.cos(thp)
+
+    return np.vstack((x,y,th))
 
 def draw_track(track, w, ax=None):
     """
@@ -166,7 +197,7 @@ def draw_vehicle_and_trajectory(ax, x, y, heading, future_states,
     # vehicle
     if vehicle_artist is None:
         vehicle_artist = Rectangle((bl_x, bl_y), L, W,
-                                   facecolor='blue', edgecolor='black', alpha=0.8,
+                                   facecolor='red', edgecolor='black', alpha=0.8,
                                    transform=transform + ax.transData, zorder=10)
         ax.add_patch(vehicle_artist)
     else:
@@ -273,7 +304,7 @@ def draw_vehicle_grid(fig, ax_main, ax_bicycle,
 
     # --- Front friction circle ---
     if ax_front_circle is not None:
-        draw_friction_circle(ax_front_circle, Fx_front, Fy_front, F_maxf)
+        draw_friction_circle(ax_front_circle, Fx_front, Fy_front, F_maxf, title=True)
 
     # --- Rear friction circle ---
     if ax_rear_circle is not None:
@@ -282,7 +313,7 @@ def draw_vehicle_grid(fig, ax_main, ax_bicycle,
     return vehicle_artist, trajectory_artist, tire_artists, arrow_artists
 
 
-def draw_friction_circle(ax, Fx, Fy, F_max):
+def draw_friction_circle(ax, Fx, Fy, F_max, title=False):
     """
     Draw friction circle and force arrow.
     Fx, Fy: longitudinal/lateral force
@@ -296,7 +327,8 @@ def draw_friction_circle(ax, Fx, Fy, F_max):
     ax.set_ylabel("Fx")
     ax.set_xticks([])
     ax.set_yticks([])
-    # ax.set_title("Friction Circle")
+    if title:
+        ax.set_title("Force Circle")
     # ax.axis('off')
 
     # Circle for max force

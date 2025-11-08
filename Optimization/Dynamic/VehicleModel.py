@@ -44,8 +44,8 @@ def DynVehicleModel(state, u):
     Fxd = Cd0 + Cd2*vx**2
     Fxfmax = np.cos(af)*muf*Fzf
     Fxrmax = np.cos(ar)*mur*Fzr
-    Fxf = min(Fx, Fxfmax)
-    Fxr = 0.#min(Fx/2, Fxrmax)
+    Fxf = min(Fx, Fxfmax) if Fx > 0 else min(0.75*Fx, Fxfmax)
+    Fxr = 0.              if Fx > 0 else min(0.25*Fx, Fxrmax)
     Caf = Caf_*Fzf
     Car = Car_*Fzr
     Fyfmax = np.sqrt((muf*Fzf)**2 - Fxf**2)

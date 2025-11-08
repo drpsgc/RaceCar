@@ -41,8 +41,8 @@ def rollout(x0, U, dt):
 
 
 params = {
-    "N": 200,
-    "T": 10,
+    "N": 150,
+    "T": 7.5,
     "Q": [0., 0.0, 0, 0.0, 0, 0.0],
     "P": [0., 0.0, 0., 0.0, 0, 0.0],
     "q": [-2., 0., 0., -0., 0., 0.],
@@ -107,11 +107,11 @@ T = []
 # Prepare plots
 # fig, ax = plt.subplots()
 fig = plt.figure(figsize=(10, 5))
-gs = plt.GridSpec(2, 4, figure=fig)
-ax_main = fig.add_subplot(gs[:, :2])
-ax_bicycle = fig.add_subplot(gs[:, 2])
-ax_front_circle = fig.add_subplot(gs[0, 3])  # top right
-ax_rear_circle = fig.add_subplot(gs[1, 3])   # bottom right
+gs = plt.GridSpec(4, 6, figure=fig)
+ax_main = fig.add_subplot(gs[:, :4])
+ax_bicycle = fig.add_subplot(gs[:, 4])
+ax_front_circle = fig.add_subplot(gs[0:2, 5])  # top right
+ax_rear_circle = fig.add_subplot(gs[2:4, 5])   # bottom right
 # ax.set_aspect('equal')
 vehicle_artist = None
 trajectory_artist = None
@@ -131,13 +131,21 @@ for step in range(450*2):
     v_opt, solved, mu, x_ref = sqp.solve(x, v_opt, mu, xref)
     t2 = time.perf_counter()
     
-    # Prediction from SQP is in Frenet frame
-    # Calculate x,y,theta by rolling out input trajectory
-    # (alternatively could be done geometrically)
+    # Save trajectories for visualization
     u1p = v_opt[nx + ns::nvar]
     u2p = v_opt[nx + ns + 1::nvar]
-    up = np.concat((u1p, u2p),axis=1).T
-    Xp = rollout(x, up, dt)
+    u = np.array(v_opt[nx+ns : nx+ns+nu])
+
+    # Simulate race car
+    x = sim(x, u, dt, 4)
+
+    # Prediction from SQP is in Frenet frame
+    # Convert to xy
+    sp = v_opt[0::nvar]
+    dp = v_opt[1::nvar]
+    thp = v_opt[2::nvar]
+    Xp = utils.get_traj_xy(sp, dp, thp, track.track, x)
+
     x1p = Xp[0,:]
     x2p = Xp[1,:]
     x3p = Xp[2,:]
@@ -145,12 +153,6 @@ for step in range(450*2):
     elapsed_time = t2 - t1
     T += [elapsed_time]
     print("solve time: ", elapsed_time)
-
-    # Save trajectories for visualization
-    u = np.array(v_opt[nx+ns : nx+ns+nu])
-
-    # Simulate race car
-    x = sim(x, u, dt, 4)
 
     # Save trajectories for visualization
     xf += [v_opt[0:4]]
@@ -173,7 +175,6 @@ for step in range(450*2):
 
     SOLVED += [solved]
 
-    # vehicle_artist, trajectory_artist = utils.draw_vehicle_and_trajectory(ax, x[0], x[1], x[2], Xp, vehicle_artist=vehicle_artist, trajectory_artist=trajectory_artist)
     xx  = x[0][0]
     yx  = x[1][0]
     thx = x[2][0]
@@ -193,8 +194,8 @@ for step in range(450*2):
     # Forces
     Fxfmax = np.cos(af)*sqp.muf*Fzf
     Fxrmax = np.cos(ar)*sqp.mur*Fzr
-    Fxf = np.fmin(Fx, Fxfmax)
-    Fxr = 0.#np.fmin(Fx/2, Fxrmax)
+    Fxf = min(Fx, Fxfmax) if Fx > 0 else min(0.75*Fx, Fxfmax)
+    Fxr = 0.              if Fx > 0 else min(0.25*Fx, Fxrmax)
     Caf = sqp.Caf*Fzf
     Car = sqp.Car*Fzr
     Fyfmax = np.sqrt((sqp.muf*Fzf)**2 - Fxf**2)

@@ -61,6 +61,7 @@ class SQP:
         self.Cd0 = 218.
         self.Cd2 = 0.4243
         self.g = 9.81
+        self.Fxscale = 5000.
         
         # Build solver
         self.build_solver()
@@ -72,7 +73,7 @@ class SQP:
         curv = self.symX.sym("k",1)      # curvature (exogenous)
 
         ###### System dynamics
-        Fx = u[0]
+        Fx = self.Fxscale*u[0]
         delta = u[1]
         
         s  = x[0]
@@ -94,8 +95,9 @@ class SQP:
         Fxd = self.Cd0 + self.Cd2*vx**2
         Fxfmax = ca.cos(af)*self.muf*Fzf
         Fxrmax = ca.cos(ar)*self.mur*Fzr
-        Fxf = ca.fmin(5000.*Fx/2, Fxfmax)
-        Fxr = 0.#ca.fmin(5000.*Fx/2, Fxrmax)
+        Fpercent = 0.75 + 0.5*(1-0.75)*(1+np.tanh(0.002*Fx))
+        Fxf = ca.fmin(Fpercent*Fx, Fxfmax)
+        Fxr = ca.fmin((1-Fpercent)*Fx, Fxrmax)
         Caf = self.Caf*Fzf
         Car = self.Car*Fzr
         Fyfmax = np.sqrt((self.muf*Fzf)**2 - Fxf**2)
@@ -200,28 +202,32 @@ class SQP:
             g.append( xk[k][1]/3 + sk[k][0]/3 )
             self.gmin += [-1]
             self.gmax += [ca.inf]
-            
-            # max speed
-            # self.vmax[self.nvar*k + 3] =  20
 
             # maximum lateral force (soft)
-            Fxks = 5000.*uk[k][0]
+            Fxks = self.Fxscale*uk[k][0]
             afk = np.arctan2(xk[k][4] + self.lf*xk[k][5], xk[k][3]) - uk[k][1]
             ark = np.arctan2(xk[k][4] - self.lr*xk[k][5], xk[k][3])
-            Fyfmaxk = np.sqrt((self.muf*Fzf)**2 - Fxks**2/4)
-            Fyrmaxk = np.sqrt((self.mur*Fzr)**2 - Fxks**2/4)
+
+            Fxfmax = ca.cos(afk)*self.muf*Fzf
+            Fxrmax = ca.cos(ark)*self.mur*Fzr
+            Fpercent = 0.75 + 0.5*(1-0.75)*(1+np.tanh(0.002*Fxks))
+            Fxfk = ca.fmin(Fpercent*Fxks, Fxfmax)
+            Fxrk = ca.fmin((1-Fpercent)*Fxks, Fxrmax)
+
+            Fyfmaxk = np.sqrt((self.muf*Fzf)**2 - Fxfk**2)
+            Fyrmaxk = np.sqrt((self.mur*Fzr)**2 - Fxrk**2)
             Fyfk = Fy_fcn(Caf, afk, Fyfmaxk)
             Fyrk = Fy_fcn(Car, ark, Fyrmaxk)
-            g.append( (Fxks**2 + Fyfk**2)/(self.muf**2*Fzf**2) - sk[k][1] )
+            g.append( (Fxfk**2 + Fyfk**2)/(self.muf**2*Fzf**2) - sk[k][1] )
             self.gmin += [-ca.inf]
             self.gmax += [0.81]
-            g.append( (0*Fxks**2 + Fyrk**2)/(self.mur**2*Fzr**2) - sk[k][2])
+            g.append( (Fxrk**2 + Fyrk**2)/(self.mur**2*Fzr**2) - sk[k][2])
             self.gmin += [-ca.inf]
             self.gmax += [0.81]
 
-            J += (xk[k] - xref[0:6, k]).T @ (Q * (xk[k] - xref[0:6, k])) + uk[k].T @ (R * uk[k]) + 5e1*sk[k].T @ sk[k] + q[0] * xk[k][0]#xk[k][3]*cos(xk[k][2] - xref[2,k])
+            J += (xk[k] - xref[0:6, k]).T @ (Q * (xk[k] - xref[0:6, k])) + uk[k].T @ (R * uk[k]) + 2e2*sk[k].T @ sk[k] + q[0] * xk[k][0]#xk[k][3]*cos(xk[k][2] - xref[2,k])
         k = self.N
-        J += (xk[k] - xref[0:6, k]).T @ (P * (xk[k] - xref[0:6, k]))# + 5e0*sk[k].T @ sk[k] + q[3] * xk[k][0]
+        J += (xk[k] - xref[0:6, k]).T @ (P * (xk[k] - xref[0:6, k])) + 5e0*sk[k].T @ sk[k] + q[0] * xk[k][0]
 
         # Cost function
         self.J_fcn = ca.Function('J_fcn', [v, xref], [J])
@@ -339,10 +345,10 @@ class SQP:
             if not np.isnan(dv).any() and solved:
                 # Take step with scheduled alpha
                 v_opt += self.alpha*dv
-                mu = dmu
+                mu += (dmu-mu)
                 self.alpha = min([self.alpha_max,self.alpha+0.2])
 
             # Scale input 0 longitudinal force
-            v_opt[self.nvar*k + self.nx + self.ns] *= 5000.
+            v_opt[self.nvar*k + self.nx + self.ns] *= self.Fxscale
 
         return v_opt.full(), solved, mu, x_ref
