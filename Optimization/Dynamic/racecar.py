@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 from SQP import SQP
-from VehicleModel import DynVehicleModel
+from VehicleModel import DynVehicleModel, LatTireForce
 
 # Hacky way to import utilities
 import sys
@@ -41,14 +41,14 @@ def rollout(x0, U, dt):
 
 
 params = {
-    "N": 50,
-    "T": 5,
+    "N": 200,
+    "T": 10,
     "Q": [0., 0.0, 0, 0.0, 0, 0.0],
     "P": [0., 0.0, 0., 0.0, 0, 0.0],
-    "q": [0., 0., 0., -2.0, 0., 0.],
-    "R": [0.01, 175],
+    "q": [-2., 0., 0., -0., 0., 0.],
+    "R": [0.25, 225],
     "max_iter": 1,
-    "Hess_approx": "GN",
+    "Hess_approx": "Newton",
     "disc_method": "rk4",
     "M": 1
 }
@@ -99,17 +99,27 @@ xf = []
 SOLVED = []
 U = []
 Alat = []
+Af = []
+Ar = []
 idx0 = 0
 T = []
 
 # Prepare plots
-fig, ax = plt.subplots()
-ax.set_aspect('equal')
+# fig, ax = plt.subplots()
+fig = plt.figure(figsize=(10, 5))
+gs = plt.GridSpec(2, 4, figure=fig)
+ax_main = fig.add_subplot(gs[:, :2])
+ax_bicycle = fig.add_subplot(gs[:, 2])
+ax_front_circle = fig.add_subplot(gs[0, 3])  # top right
+ax_rear_circle = fig.add_subplot(gs[1, 3])   # bottom right
+# ax.set_aspect('equal')
 vehicle_artist = None
 trajectory_artist = None
-utils.draw_track(track.track, 6)
+tire_artists = None
+arrow_artists = None
+utils.draw_track(track.track, 6, ax=ax_main)
 
-for step in range(450):
+for step in range(450*2):
     t = step*dt
 
     # x,y,theta trajectory in global coordinates
@@ -163,9 +173,45 @@ for step in range(450):
 
     SOLVED += [solved]
 
-    vehicle_artist, trajectory_artist = utils.draw_vehicle_and_trajectory(ax, x[0], x[1], x[2], Xp, vehicle_artist=vehicle_artist, trajectory_artist=trajectory_artist)
+    # vehicle_artist, trajectory_artist = utils.draw_vehicle_and_trajectory(ax, x[0], x[1], x[2], Xp, vehicle_artist=vehicle_artist, trajectory_artist=trajectory_artist)
+    xx  = x[0][0]
+    yx  = x[1][0]
+    thx = x[2][0]
+    vxx = x[3][0]
+    vyx = x[4][0]
+    rx  = x[5][0]
+    Fx = u[0][0]
+    delta = u[1][0]
+    # Assume no load transfer
+    Fzf = sqp.m*sqp.lr*sqp.g/sqp.L
+    Fzr = sqp.m*sqp.lf*sqp.g/sqp.L
 
-    plt.pause(0.01)  # brief pause for animation
+    # Slip angles
+    af = np.arctan2(vyx + sqp.lf*rx, vxx) - delta
+    ar = np.arctan2(vyx - sqp.lr*rx, vxx)
+
+    # Forces
+    Fxfmax = np.cos(af)*sqp.muf*Fzf
+    Fxrmax = np.cos(ar)*sqp.mur*Fzr
+    Fxf = np.fmin(Fx, Fxfmax)
+    Fxr = 0.#np.fmin(Fx/2, Fxrmax)
+    Caf = sqp.Caf*Fzf
+    Car = sqp.Car*Fzr
+    Fyfmax = np.sqrt((sqp.muf*Fzf)**2 - Fxf**2)
+    Fyrmax = np.sqrt((sqp.mur*Fzr)**2 - Fxr**2)
+    Fyf = LatTireForce(Caf, af, Fyfmax,True)
+    Fyr = LatTireForce(Car, ar, Fyrmax,True)
+
+    Af += [af]
+    Ar += [ar]
+    vehicle_artist, trajectory_artist, tire_artists, arrow_artists = utils.draw_vehicle_grid(fig, ax_main, ax_bicycle, states=(xx, yx, thx), future_states=Xp, steering=delta, velocity=vxx, slipf=-af, slipr=-ar,
+                          vehicle_artist=vehicle_artist, trajectory_artist=trajectory_artist,
+                          tire_artists=tire_artists, arrow_artists=arrow_artists,
+                          L=4.5, W=2.0, tire_len=0.8, tire_wid=0.3,
+                          Fx_front=Fxf, Fy_front=Fyf, Fx_rear=Fxr, Fy_rear=Fyr, F_maxf=sqp.muf*Fzf, F_maxr=sqp.mur*Fzr,
+                          ax_front_circle=ax_front_circle, ax_rear_circle=ax_rear_circle)
+
+    plt.pause(0.0001)  # brief pause for animation
     if xref[5,0] >= track.track[-5,4]:
         print("FINISHED! Lap time: ", dt*step)
         break
@@ -187,6 +233,8 @@ Xr3 = np.asarray(Xr3)
 Xr4 = np.asarray(Xr4)
 xf = np.asarray(xf)
 Alat = np.asarray(Alat)
+Af = np.asarray(Af)
+Ar = np.asarray(Ar)
 
 x1_opt = X[:, 0]
 x2_opt = X[:, 1]
@@ -246,16 +294,31 @@ ax2.grid(True)
 ax2.legend(loc=legend_loc)
 
 
+# Slip angles
+fig, (ax1, ax2) = plt.subplots(2, 1, num=4)
+fig.suptitle("slip angles")
+ax1.plot(t1, 57.3*Af, label='front')
+# ax1.plot([t1[0],t1[-1]],[-5000, -5000],'r--',linewidth=1)
+# ax1.plot([t1[0],t1[-1]],[ 5000,  5000],'r--',linewidth=1)
+ax1.grid(True)
+ax1.legend(loc=legend_loc)
+ax2.plot(t1, 57.3*Ar, label='rear')
+# ax2.plot([t1[0],t1[-1]],[-np.pi/5, -np.pi/5],'r--',linewidth=1)
+# ax2.plot([t1[0],t1[-1]],[ np.pi/5,  np.pi/5],'r--',linewidth=1)
+ax2.grid(True)
+ax2.legend(loc=legend_loc)
+
+
 # Show prediction
-plt.figure(4)
-at_sample = step - 5
-plt.plot(Xr1[at_sample,:], label='x_ref')
-plt.plot(Xr2[at_sample,:], label='y_ref')
-plt.plot(Xr3[at_sample,:], label='th_ref')
-plt.plot(Xr4[at_sample,:], label='v_ref')
-plt.legend(loc=legend_loc)
-plt.grid()
-plt.title("Trajectory at given sample")
+# plt.figure(5)
+# at_sample = step - 5
+# plt.plot(Xr1[at_sample,:], label='x_ref')
+# plt.plot(Xr2[at_sample,:], label='y_ref')
+# plt.plot(Xr3[at_sample,:], label='th_ref')
+# plt.plot(Xr4[at_sample,:], label='v_ref')
+# plt.legend(loc=legend_loc)
+# plt.grid()
+# plt.title("Trajectory at given sample")
 
 
 

@@ -44,8 +44,8 @@ def DynVehicleModel(state, u):
     Fxd = Cd0 + Cd2*vx**2
     Fxfmax = np.cos(af)*muf*Fzf
     Fxrmax = np.cos(ar)*mur*Fzr
-    Fxf = min(Fx/2, Fxfmax)
-    Fxr = min(Fx/2, Fxrmax)
+    Fxf = min(Fx, Fxfmax)
+    Fxr = 0.#min(Fx/2, Fxrmax)
     Caf = Caf_*Fzf
     Car = Car_*Fzr
     Fyfmax = np.sqrt((muf*Fzf)**2 - Fxf**2)
@@ -65,13 +65,15 @@ def DynVehicleModel(state, u):
     
     return state_dot
     
-def LatTireForce(Caj, aj, Fyjmax):
+def LatTireForce(Caj, aj, Fyjmax, debug=False):
     
     tan_aj_sl = 3*Fyjmax/Caj
     tan_aj = np.tan(aj)
     if abs(tan_aj) < tan_aj_sl:
         Fyj = -Caj*tan_aj + Caj**2*tan_aj*abs(tan_aj)/(3*Fyjmax) - Caj**3*tan_aj**3/(27*Fyjmax**2)
     else:
+        if debug:
+            print("slipping")
         Fyj = -Fyjmax*np.sign(aj)
     
     return Fyj

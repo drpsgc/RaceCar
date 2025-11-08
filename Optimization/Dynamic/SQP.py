@@ -94,8 +94,8 @@ class SQP:
         Fxd = self.Cd0 + self.Cd2*vx**2
         Fxfmax = ca.cos(af)*self.muf*Fzf
         Fxrmax = ca.cos(ar)*self.mur*Fzr
-        Fxf = 1000.*Fx/2#ca.fmin(Fx/2, Fxfmax)
-        Fxr = 1000.*Fx/2#ca.fmin(Fx/2, Fxrmax)
+        Fxf = ca.fmin(5000.*Fx/2, Fxfmax)
+        Fxr = 0.#ca.fmin(5000.*Fx/2, Fxrmax)
         Caf = self.Caf*Fzf
         Car = self.Car*Fzr
         Fyfmax = np.sqrt((self.muf*Fzf)**2 - Fxf**2)
@@ -190,36 +190,36 @@ class SQP:
             self.gmax += [0, 0, 0, 0, 0, 0]
 
             # Input constraints
-            self.vmin[self.nvar*k + self.nx + self.ns : self.nvar*k + self.nx + self.ns + self.nu] = [-5, -np.pi/5]
-            self.vmax[self.nvar*k + self.nx + self.ns : self.nvar*k + self.nx + self.ns + self.nu] = [ 5,  np.pi/5]
+            self.vmin[self.nvar*k + self.nx + self.ns : self.nvar*k + self.nx + self.ns + self.nu] = [-1, -np.pi/5]
+            self.vmax[self.nvar*k + self.nx + self.ns : self.nvar*k + self.nx + self.ns + self.nu] = [ 1,  np.pi/5]
 
             # max lateral offset (soft)
-            g.append( xk[k][1] - sk[k][0] )
+            g.append( xk[k][1]/3 - sk[k][0]/3 )
             self.gmin += [-ca.inf]
-            self.gmax += [3]
-            g.append( xk[k][1] + sk[k][0] )
-            self.gmin += [-3]
+            self.gmax += [1]
+            g.append( xk[k][1]/3 + sk[k][0]/3 )
+            self.gmin += [-1]
             self.gmax += [ca.inf]
             
             # max speed
             # self.vmax[self.nvar*k + 3] =  20
 
             # maximum lateral force (soft)
-            Fxks = 1000.*uk[k][0]
+            Fxks = 5000.*uk[k][0]
             afk = np.arctan2(xk[k][4] + self.lf*xk[k][5], xk[k][3]) - uk[k][1]
             ark = np.arctan2(xk[k][4] - self.lr*xk[k][5], xk[k][3])
             Fyfmaxk = np.sqrt((self.muf*Fzf)**2 - Fxks**2/4)
             Fyrmaxk = np.sqrt((self.mur*Fzr)**2 - Fxks**2/4)
             Fyfk = Fy_fcn(Caf, afk, Fyfmaxk)
             Fyrk = Fy_fcn(Car, ark, Fyrmaxk)
-            g.append( (Fxks**2/4 + Fyfk**2)/(self.muf**2*Fzf**2) - sk[k][1] )
+            g.append( (Fxks**2 + Fyfk**2)/(self.muf**2*Fzf**2) - sk[k][1] )
             self.gmin += [-ca.inf]
             self.gmax += [0.81]
-            g.append( (Fxks**2/4 + Fyrk**2)/(self.mur**2*Fzr**2) - sk[k][2])
+            g.append( (0*Fxks**2 + Fyrk**2)/(self.mur**2*Fzr**2) - sk[k][2])
             self.gmin += [-ca.inf]
             self.gmax += [0.81]
 
-            J += (xk[k] - xref[0:6, k]).T @ (Q * (xk[k] - xref[0:6, k])) + uk[k].T @ (R * uk[k]) + 5e1*sk[k].T @ sk[k] + q[3] * xk[k][0]#xk[k][3]*cos(xk[k][2] - xref[2,k])
+            J += (xk[k] - xref[0:6, k]).T @ (Q * (xk[k] - xref[0:6, k])) + uk[k].T @ (R * uk[k]) + 5e1*sk[k].T @ sk[k] + q[0] * xk[k][0]#xk[k][3]*cos(xk[k][2] - xref[2,k])
         k = self.N
         J += (xk[k] - xref[0:6, k]).T @ (P * (xk[k] - xref[0:6, k]))# + 5e0*sk[k].T @ sk[k] + q[3] * xk[k][0]
 
@@ -324,10 +324,10 @@ class SQP:
             # Bounds on delta_v
             dv_min = self.vmin - v_opt
             dv_max = self.vmax - v_opt
-            if np.isnan(dv_min).any() or (np.isnan(dv_max)).any() or (dv_max < dv_min).full().any():
-                print("nans found")
-            if np.isnan(H_k).any() or np.isnan(Grad_obj_k).any() or np.isnan(J_g_k).any() or np.isnan(g_k).any():
-                print("NaNs found")
+            # if np.isnan(dv_min).any() or (np.isnan(dv_max)).any() or (dv_max < dv_min).full().any():
+            #     print("nans found")
+            # if np.isnan(H_k).any() or np.isnan(Grad_obj_k).any() or np.isnan(J_g_k).any() or np.isnan(g_k).any():
+            #     print("NaNs found")
             
             # Solve the QP
             sol = self.solver(h=H_k, g=Grad_obj_k, a=J_g_k, lbx=dv_min, ubx=dv_max, lba=self.gmin-g_k, uba=self.gmax-g_k)
@@ -343,6 +343,6 @@ class SQP:
                 self.alpha = min([self.alpha_max,self.alpha+0.2])
 
             # Scale input 0 longitudinal force
-            v_opt[self.nvar*k + self.nx + self.ns] *= 1000.
+            v_opt[self.nvar*k + self.nx + self.ns] *= 5000.
 
         return v_opt.full(), solved, mu, x_ref
