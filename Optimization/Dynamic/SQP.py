@@ -27,6 +27,7 @@ class SQP:
         self.J_fcn = None # Casadi cost function
         self.Jac_g_fcn = None # Jacobian/function of constraints
         self.Hess_J_fcn = None # Hessian/Jacobian of cost function
+        self.Hess_L_fcn = None # Hessian/Jacobian of cost function
         self.solver = None # Conic QP solver
 
         self.vmin = None # Lower bounds on decision variables
@@ -38,12 +39,16 @@ class SQP:
         self.nx = 6 # number of states
         self.nu = 2 # number of inputs
         self.ns = 3 # number of slacks
-        self.nvar = self.nx + self.nu + self.ns # number of decision variables per stage
-        self.nv = self.nu*self.N + self.nx*(self.N+1) + self.ns*(self.N+1) # Total decision variables
+        self.ne = 0 # number of slacks
+        self.nvar = self.nx + self.nu + self.ns + self.ne# number of decision variables per stage
+        self.nv = self.nu*self.N + self.nx*(self.N+1) + self.ns*(self.N+1) + self.ne*(self.N+1) # Total decision variables
 
         # Linea search
         self.alpha = 0.1
-        self.alpha_max = 0.3 if self.Hess_approx == "GN" else 0.5
+        self.alpha_GN = 0.2
+        self.alpha_N = 0.3
+        self.alpha_max = self.alpha_GN if self.Hess_approx == "GN" else self.alpha_N
+        self.alpha_min = 0.1
 
         # Symbols
         self.symX = ca.MX if self.Hess_approx == "Newton" else ca.SX
@@ -61,7 +66,7 @@ class SQP:
         self.Cd0 = 218.
         self.Cd2 = 0.4243
         self.g = 9.81
-        self.Fxscale = 5000.
+        self.Fxscale = 7500.
         
         # Build solver
         self.build_solver()
@@ -153,8 +158,11 @@ class SQP:
         # Get the slacks for each shooting interval
         sk = [v[self.nvar*k + self.nx : self.nvar*k + (self.nx + self.ns)] for k in range(self.N+1)]
 
+        # Get the slacks for each shooting interval
+        # ek = [v[self.nvar*k + self.nx + self.ns: self.nvar*k + (self.nx + self.ns + self.ne)] for k in range(self.N+1)]
+
         # Get the control for each shooting interval
-        uk = [v[self.nvar*k + (self.nx + self.ns) : self.nvar*k + (self.nx + self.ns + self.nu)] for k in range(self.N)]
+        uk = [v[self.nvar*k + (self.nx + self.ns + self.ne) : self.nvar*k + (self.nx + self.ns + self.ne + self.nu)] for k in range(self.N)]
 
         # Variable bounds
         self.vmin = -ca.inf*np.ones(self.nv)
@@ -171,6 +179,7 @@ class SQP:
         P = np.asarray(self.P)
         q = np.asarray(self.q).reshape(-1, 1)
         R = np.asarray(self.R)
+        Qs = np.asarray([1e4,5e3,5e3])
         J = 0
 
         # Build up a graph of integrator calls
@@ -192,8 +201,14 @@ class SQP:
             self.gmax += [0, 0, 0, 0, 0, 0]
 
             # Input constraints
-            self.vmin[self.nvar*k + self.nx + self.ns : self.nvar*k + self.nx + self.ns + self.nu] = [-1, -np.pi/5]
-            self.vmax[self.nvar*k + self.nx + self.ns : self.nvar*k + self.nx + self.ns + self.nu] = [ 1,  np.pi/5]
+            self.vmin[self.nvar*k + self.nx + self.ns + self.ne : self.nvar*k + self.nx + self.ns + self.ne + self.nu] = [-1, -np.pi/5]
+            self.vmax[self.nvar*k + self.nx + self.ns + self.ne : self.nvar*k + self.nx + self.ns + self.ne + self.nu] = [0.67,  np.pi/5]
+
+            # Max speed
+            # self.vmax[self.nvar*k + 3] = 15
+
+            # Equality slacks
+            # self.vmin[self.nvar*k + self.nx + self.ns : self.nvar*k + self.nx + self.ns + self.ne] = [0, 0]
 
             # max lateral offset (soft)
             g.append( xk[k][1]/3 - sk[k][0]/3 )
@@ -218,16 +233,29 @@ class SQP:
             Fyrmaxk = np.sqrt((self.mur*Fzr)**2 - Fxrk**2)
             Fyfk = Fy_fcn(Caf, afk, Fyfmaxk)
             Fyrk = Fy_fcn(Car, ark, Fyrmaxk)
-            g.append( (Fxfk**2 + Fyfk**2)/(self.muf**2*Fzf**2) - sk[k][1] )
+            g.append( (Fxfk**2 + Fyfk**2)/(self.muf**2*Fzf**2) - sk[k][1])# + ek[k][0])
             self.gmin += [-ca.inf]
             self.gmax += [0.81]
-            g.append( (Fxrk**2 + Fyrk**2)/(self.mur**2*Fzr**2) - sk[k][2])
+            g.append( (Fxrk**2 + Fyrk**2)/(self.mur**2*Fzr**2) - sk[k][2])# + ek[k][1])
             self.gmin += [-ca.inf]
             self.gmax += [0.81]
 
-            J += (xk[k] - xref[0:6, k]).T @ (Q * (xk[k] - xref[0:6, k])) + uk[k].T @ (R * uk[k]) + 2e2*sk[k].T @ sk[k] + q[0] * xk[k][0]#xk[k][3]*cos(xk[k][2] - xref[2,k])
+            # maximum slip
+            # tan_af_slk = 3*Fyfmaxk/Caf
+            # tan_afk = ca.tan(afk)
+            # g.append( tan_afk / tan_af_slk - sk[k][3])
+            # self.gmin += [-1]
+            # self.gmax += [1]
+
+            # tan_ar_slk = 3*Fyrmaxk/Car
+            # tan_ark = ca.tan(ark)
+            # g.append( tan_ark / tan_ar_slk - sk[k][4])
+            # self.gmin += [-1]
+            # self.gmax += [1]
+
+            J += (xk[k] - xref[0:6, k]).T @ (Q * (xk[k] - xref[0:6, k])) + uk[k].T @ (R * uk[k]) + sk[k].T @ (Qs*sk[k]) + q[0] * xk[k][0]#xk[k][3]*cos(xk[k][2] - xref[2,k])
         k = self.N
-        J += (xk[k] - xref[0:6, k]).T @ (P * (xk[k] - xref[0:6, k])) + 5e0*sk[k].T @ sk[k] + q[0] * xk[k][0]
+        J += (xk[k] - xref[0:6, k]).T @ (P * (xk[k] - xref[0:6, k])) + sk[k].T @ (Qs*sk[k])  + q[0] * xk[k][0]
 
         # Cost function
         self.J_fcn = ca.Function('J_fcn', [v, xref], [J])
@@ -248,7 +276,7 @@ class SQP:
         if self.Hess_approx == "Newton":
             L = J + mu.T @ g
             HL_, _ = ca.hessian(L, v)
-            HL = ca.convexify(HL_, {'strategy':'eigen-reflect'})
+            HL = ca.convexify(HL_, {'strategy':'eigen-clip'})
             self.Hess_L_fcn = ca.Function('H_L_fcn', [v, mu, xref], [HL],{'jit': True})
         elif self.Hess_approx == "GN":
             L = J
@@ -271,9 +299,11 @@ class SQP:
         self.solver = ca.conic('solver', 'osqp', qp, opts)
 
     def solve(self, x_c, v0, mu0, xref):
-        v0[:-self.nx-self.nu-self.ns] = v0[self.nx+self.nu+self.ns:]
-        mu0[:-self.nx-4] = mu0[self.nx+4:]
+
         v_opt = ca.DM(v0)
+        mu = ca.DM(mu0)
+        v_opt[:-self.nx-self.nu-self.ns-self.ne] = v_opt[self.nx+self.nu+self.ns+self.ne:]
+        mu[:-self.nx-4] = mu[self.nx+4:]
 
         # calculate state in Frenet frame [s, d, th-th_path, vx, vy, r_e]
         x = x_c.copy()
@@ -306,18 +336,23 @@ class SQP:
         
         # v_opt = ca.DM(v0)
         lam = ca.DM(np.zeros_like(v0))
-        mu = ca.DM(mu0)
         # mu = ca.DM(np.zeros_like(self.gmin))
 
         for k in range(self.N_iter):
             # Form linear approximation of constraints
             # print(v_opt)
             J_g_k, g_k = self.Jac_g_fcn(v_opt, x_ref)
-            # maxg = np.max(J_g_k)
+            # maxg = np.max(ca.fabs(J_g_k))
             # print(maxg)
 
             # Newton Hessian of L and gradient of J
-            H_k = self.Hess_L_fcn(v_opt, mu, x_ref)
+            try:
+                H_k = self.Hess_L_fcn(v_opt, mu, x_ref)
+            except RuntimeError as e:
+                # Revert to Gauss-Newton if convexification fails
+                H_k = self.Hess_L_fcn(v_opt, 0*mu, x_ref)
+                self.alpha = self.alpha_min# min(self.alpha, self.alpha_GN)
+                print("GN")
 
             # Convexify
             # H_k = 0.5*(H_k + H_k.T)
@@ -345,10 +380,13 @@ class SQP:
             if not np.isnan(dv).any() and solved:
                 # Take step with scheduled alpha
                 v_opt += self.alpha*dv
-                mu += (dmu-mu)
-                self.alpha = min([self.alpha_max,self.alpha+0.2])
+                mu += self.alpha*(dmu-mu)
+                self.alpha = min([self.alpha_max,self.alpha+0.1])
+            else:
+                self.alpha = max([self.alpha_min,self.alpha-0.1])
+                print("failed")
 
             # Scale input 0 longitudinal force
-            v_opt[self.nvar*k + self.nx + self.ns] *= self.Fxscale
+            v_opt[self.nx + self.ns + self.ne::self.nv] *= self.Fxscale
 
         return v_opt.full(), solved, mu, x_ref

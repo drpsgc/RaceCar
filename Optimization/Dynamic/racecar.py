@@ -2,7 +2,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 from SQP import SQP
-from VehicleModel import DynVehicleModel, LatTireForce
 
 # Hacky way to import utilities
 import sys
@@ -11,7 +10,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..',
 
 import utils
 from racetrack import RaceTrack
-
+from VehicleModel import DynVehicleModel, LatTireForce
 
 def dyn(x, u):
     L = 3
@@ -46,7 +45,7 @@ params = {
     "Q": [0., 0.0, 0, 0.0, 0, 0.0],
     "P": [0., 0.0, 0., 0.0, 0, 0.0],
     "q": [-2., 0., 0., -0., 0., 0.],
-    "R": [0.25, 225],
+    "R": [0.25, 50],
     "max_iter": 1,
     "Hess_approx": "Newton",
     "disc_method": "rk4",
@@ -56,15 +55,17 @@ params = {
 nx = 6
 nu = 2
 ns = 3
-nvar = nx + nu + ns
-nv = nu*params["N"] + nx*(params["N"]+1) + ns*(params["N"]+1) # nu, nx, ns
+ne = 0
+nvar = nx + nu + ns + ne
+nv = nu*params["N"] + nx*(params["N"]+1) + ns*(params["N"]+1) + ne*(params["N"]+1) # nu, nx, ns
 v0 = np.zeros(nv)
 v0[0::nvar] = 0.5*(np.arange(params["N"]+1))
 sqp = SQP(params)
 
 start_time = time.perf_counter()
 
-track = RaceTrack()
+track = RaceTrack("circuit")
+# track.track = track.create_random(20)
 
 ################### SIMULATION #####################
 dt = params["T"]/params["N"]#0.05
@@ -132,12 +133,12 @@ for step in range(450*2):
     t2 = time.perf_counter()
     
     # Save trajectories for visualization
-    u1p = v_opt[nx + ns::nvar]
-    u2p = v_opt[nx + ns + 1::nvar]
-    u = np.array(v_opt[nx+ns : nx+ns+nu])
+    u1p = v_opt[nx + ns + ne::nvar]
+    u2p = v_opt[nx + ns + ne + 1::nvar]
+    u = np.array(v_opt[nx+ns+ne : nx+ns+ne+nu])
 
     # Simulate race car
-    x = sim(x, u, dt, 4)
+    x = sim(x, u, dt, M=4)
 
     # Prediction from SQP is in Frenet frame
     # Convert to xy
@@ -145,6 +146,9 @@ for step in range(450*2):
     dp = v_opt[1::nvar]
     thp = v_opt[2::nvar]
     Xp = utils.get_traj_xy(sp, dp, thp, track.track, x)
+    # up = np.concat((u1p, u2p),axis=1).T
+    # Xp = rollout(x, up, dt)
+
 
     x1p = Xp[0,:]
     x2p = Xp[1,:]
@@ -266,7 +270,7 @@ plt.ylim(-5, 105)
 plt.grid()
 
 # Plot relevant variables
-fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, num=2)
+fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, num=2, sharex=True)
 ax1.plot(t2, x4_opt, label='speed')
 ax2.plot(t1, xf[:,1], label='d')
 ax2.plot([t1[0],t1[-1]],[-3, -3],'r--',linewidth=1)
@@ -281,7 +285,7 @@ for ax in (ax1, ax2, ax3, ax4):
 
 
 # Control input plots
-fig, (ax1, ax2) = plt.subplots(2, 1, num=3)
+fig, (ax1, ax2) = plt.subplots(2, 1, num=3, sharex=True)
 fig.suptitle("control inputs")
 ax1.plot(t1, u1_opt, label='acceleration')
 ax1.plot([t1[0],t1[-1]],[-5000, -5000],'r--',linewidth=1)
@@ -296,7 +300,7 @@ ax2.legend(loc=legend_loc)
 
 
 # Slip angles
-fig, (ax1, ax2) = plt.subplots(2, 1, num=4)
+fig, (ax1, ax2) = plt.subplots(2, 1, num=4, sharex=True)
 fig.suptitle("slip angles")
 ax1.plot(t1, 57.3*Af, label='front')
 # ax1.plot([t1[0],t1[-1]],[-5000, -5000],'r--',linewidth=1)
