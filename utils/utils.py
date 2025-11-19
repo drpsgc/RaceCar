@@ -5,6 +5,11 @@ import math
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 
+from matplotlib.patches import Rectangle
+from matplotlib.transforms import Affine2D
+from matplotlib.gridspec import GridSpec
+from matplotlib.patches import FancyArrow
+
 
 def signed_distance_to_line(p, p1, p2):
     px = p[0]
@@ -117,76 +122,222 @@ def get_ref_race_frenet(X, N, TRACK, idx0):
 
     return ref
 
-def draw_track(track, w):
-    left = np.zeros((track.shape[0],2))
-    right = np.zeros((track.shape[0],2))
-    for i in range(track.shape[0]):
-        normal = np.array([np.cos(track[i,2]+np.pi/2) , np.sin(track[i,2]+np.pi/2)])
-        left[i,:] = track[i,0:2] + w/2*normal
-        right[i,:] = track[i,0:2] - w/2*normal
-    
-    plt.plot(track[:,0], track[:,1],'k', linewidth=1)
-    plt.plot(left[:,0], left[:,1], 'r--')
-    plt.plot(right[:,0], right[:,1],'r--')
-    
+def get_traj_xy1(d, th, ref):
+    # Converts trajectory from d,th to x,y,th given a reference
+    # ref is [x,y,th(idx),v,k(idx),s]
 
-from matplotlib.patches import Rectangle
-from matplotlib.transforms import Affine2D
+    traj = ref[0:3].copy()
+    for i in range(1,ref.shape[1]):
+        traj[0,i] = ref[0,i] - d[i]*np.sin(ref[2,i])
+        traj[1,i] = ref[1,i] + d[i]*np.cos(ref[2,i])
+    traj[2,:] = th.squeeze()
+    return traj
+
+def get_traj_xy(s, d, th, track, x):
+    _, s0, _ = proj_to_path(x, track, 0)
+    smax = track[-1,4]
+    s = [(si + s0)%smax  for si in s]
+    th = th.squeeze()
+    indices = np.searchsorted(track[:,4], s, side='left') # return first "greater than" index
+    N = indices.shape[0]
+    Nt = track.shape[0]
+
+    x = np.zeros(N)
+    y = np.zeros(N)
+    for i in range(N):
+        idx = min(indices[i],Nt-1)
+        frac = (s[i]-track[idx-1,4])/(track[idx,4]-track[idx-1,4])
+
+        thp  = (1-frac)*track[idx-1,2] + frac*track[idx,2]
+        x[i] = (1-frac)*track[idx-1,0] + frac*track[idx,0] - d[i]*np.sin(thp)
+        y[i] = (1-frac)*track[idx-1,1] + frac*track[idx,1] + d[i]*np.cos(thp)
+
+    return np.vstack((x,y,th))
+
+def draw_track(track, w, ax=None):
+    """
+    Draw track centerline and boundaries.
+    track: array of shape (N, 3) [x, y, heading]
+    w: track width
+    ax: optional matplotlib axis
+    """
+    if ax is None:
+        ax = plt.gca()
+
+    left = np.zeros((track.shape[0], 2))
+    right = np.zeros((track.shape[0], 2))
+    for i in range(track.shape[0]):
+        normal = np.array([
+            np.cos(track[i, 2] + np.pi / 2),
+            np.sin(track[i, 2] + np.pi / 2)
+        ])
+        left[i, :] = track[i, 0:2] + w / 2 * normal
+        right[i, :] = track[i, 0:2] - w / 2 * normal
+
+    ax.plot(track[:, 0], track[:, 1], 'k', linewidth=1)
+    ax.plot(left[:, 0], left[:, 1], 'r--', linewidth=0.8)
+    ax.plot(right[:, 0], right[:, 1], 'r--', linewidth=0.8)
+    ax.set_aspect('equal')
+
 
 def draw_vehicle_and_trajectory(ax, x, y, heading, future_states,
                                 vehicle_artist=None, trajectory_artist=None,
                                 L=4.5, W=2.0):
     """
     Draw or update a vehicle rectangle and trajectory line.
-
-    Parameters:
-    - ax: matplotlib Axes
-    - x, y, heading: rear axle position and heading in radians
-    - future_states: np.array shape (3, N) of future x, y, heading
-    - vehicle_artist: existing rectangle (for reuse)
-    - trajectory_artist: existing line (for reuse)
-    - L, W: length and width of vehicle
-
-    Returns:
-    - Updated vehicle_artist and trajectory_artist
     """
-
-    # Compute center of rectangle (vehicle center is forward from rear axle)
     rear_to_center = L / 2
     cx = x + rear_to_center * np.cos(heading)
     cy = y + rear_to_center * np.sin(heading)
 
-    # Define transform for rotation + translation around center
     transform = Affine2D().rotate_around(cx, cy, heading)
-
-    # Bottom-left corner before rotation (centered rectangle)
     bl_x = cx - L / 2
     bl_y = cy - W / 2
 
+    # vehicle
     if vehicle_artist is None:
-        # Create the rectangle at (bl_x, bl_y) with identity transform
         vehicle_artist = Rectangle((bl_x, bl_y), L, W,
-                                   facecolor='blue', edgecolor='black', alpha=0.8,
-                                   transform=transform + ax.transData,
-                                   zorder=10)
+                                   facecolor='red', edgecolor='black', alpha=0.8,
+                                   transform=transform + ax.transData, zorder=10)
         ax.add_patch(vehicle_artist)
     else:
-        # Update position and transform
         vehicle_artist.set_xy((bl_x, bl_y))
         vehicle_artist.set_transform(transform + ax.transData)
 
-    # Update trajectory
+    # trajectory
     if future_states is not None:
         traj_x = future_states[0, :]
         traj_y = future_states[1, :]
-
         if trajectory_artist is None:
-            trajectory_artist, = ax.plot(traj_x, traj_y, linewidth=1.5, zorder=5)
+            trajectory_artist, = ax.plot(traj_x, traj_y, 'b-', linewidth=1.5, zorder=5)
         else:
             trajectory_artist.set_data(traj_x, traj_y)
 
     return vehicle_artist, trajectory_artist
 
+
+def draw_vehicle_grid(fig, ax_main, ax_bicycle,
+                      states, future_states,
+                      steering, velocity, slipf, slipr,
+                      vehicle_artist=None, trajectory_artist=None,
+                      tire_artists=None, arrow_artists=None,
+                      L=4.5, W=2.0, tire_len=0.8, tire_wid=0.3,
+                      Fx_front=0, Fy_front=0, Fx_rear=0, Fy_rear=0, F_maxf=1.0, F_maxr=1.0,
+                      ax_front_circle=None, ax_rear_circle=None):
+    """
+    Draws:
+      - main trajectory view on ax_main
+      - vertical bicycle model on ax_bicycle
+    """
+    x, y, psi = states
+
+    # --- Main plot update ---
+    vehicle_artist, trajectory_artist = draw_vehicle_and_trajectory(
+        ax_main, x, y, psi, future_states,
+        vehicle_artist=vehicle_artist,
+        trajectory_artist=trajectory_artist,
+        L=L, W=W
+    )
+
+    # --- Bicycle model plot ---
+    lf = 1.5#L / 2
+    lr = -1.5#-L / 2
+    if tire_artists is None:
+        tire_artists = []
+        arrow_artists = []
+
+        tire_positions = [
+            (0, lr, 'rear'),  # rear tire
+            (0, lf, 'front')  # front tire
+        ]
+
+        # Connecting chassis line
+        ax_bicycle.plot([0, 0], [lr, lf],
+                                          'k-', linewidth=3, zorder=0)
+
+        for i, (tx, ty, name) in enumerate(tire_positions):
+            tire = Rectangle((tx - tire_wid / 2, ty - tire_len / 2),
+                             tire_wid, tire_len,
+                             facecolor='black', alpha=0.7)
+            ax_bicycle.add_patch(tire)
+
+            # arrows for each tire
+            arrow = FancyArrow(tx, ty + 0.05, 0, velocity * 0.2,
+                               width=0.1, color='red')
+            ax_bicycle.add_patch(arrow)
+
+            tire_artists.append(tire)
+            arrow_artists.append(arrow)
+
+        ax_bicycle.set_xlim(-1, 1)
+        ax_bicycle.set_ylim(-L / 1.2, L / 1.2)
+        ax_bicycle.set_aspect('equal')
+        ax_bicycle.set_title("Bicycle Model")
+        ax_bicycle.axis('off')
+
+    else:
+        # Update tire angles and arrow directions
+        positions = [lr, lf]
+        slip_angles = [slipr, slipf]
+
+        for i, (tire, arrow) in enumerate(zip(tire_artists, arrow_artists)):
+            ty = positions[i]
+
+            # rotate front tire with steering angle
+            if i == 1:
+                transform = Affine2D().rotate_deg_around(0, ty, np.rad2deg(steering))
+            else:
+                transform = Affine2D().rotate_deg_around(0, ty, 0)
+
+            tire.set_transform(transform + ax_bicycle.transData)
+
+            # update arrows
+            slip_angle = slip_angles[i]
+            arrow.remove()
+            arrow = FancyArrow(0, ty, velocity * 0.0,
+                               velocity * 0.06,
+                               width=0.05, color='red')
+            transform_arrow = Affine2D().rotate_deg_around(0, ty, np.rad2deg(slip_angle))
+            arrow.set_transform(transform_arrow + ax_bicycle.transData)
+            ax_bicycle.add_patch(arrow)
+            arrow_artists[i] = arrow
+
+    # --- Front friction circle ---
+    if ax_front_circle is not None:
+        draw_friction_circle(ax_front_circle, Fx_front, Fy_front, F_maxf, title=True)
+
+    # --- Rear friction circle ---
+    if ax_rear_circle is not None:
+        draw_friction_circle(ax_rear_circle, Fx_rear, Fy_rear, F_maxr)
+
+    return vehicle_artist, trajectory_artist, tire_artists, arrow_artists
+
+
+def draw_friction_circle(ax, Fx, Fy, F_max, title=False):
+    """
+    Draw friction circle and force arrow.
+    Fx, Fy: longitudinal/lateral force
+    F_max: maximum tire force
+    """
+    ax.clear()
+    ax.set_aspect('equal')
+    ax.set_xlim(-F_max*1.1, F_max*1.1)
+    ax.set_ylim(-F_max*1.1, F_max*1.1)
+    ax.set_xlabel("Fy")
+    ax.set_ylabel("Fx")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    if title:
+        ax.set_title("Force Circle")
+    # ax.axis('off')
+
+    # Circle for max force
+    circle = plt.Circle((0,0), radius=F_max, color='k', fill=False, linewidth=1.5)
+    ax.add_patch(circle)
+
+    # Resulting force vector
+    ax.plot([Fy], [Fx],'o')
+    # ax.arrow(0, 0, Fx, Fy)#, head_width=0.05*F_max, head_length=0.1*F_max, fc='r', ec='r', zorder=10)
 
 def plot_colored_line(x, y, c, cmap='RdYlGn_r', linewidth=2, colorbar_label='Value', ax=None):
     """
