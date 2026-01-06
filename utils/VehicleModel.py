@@ -5,6 +5,9 @@ Created on Mon Oct 27 19:35:08 2025
 
 @author: psgc
 """
+# Model and parameters values from
+# V. Fors and J. C. Gerdes, "Long-Horizon Vehicle Planning and Control Through Real-Time Iterations," 
+# 2023 IEEE Intelligent Vehicles Symposium (IV), Anchorage, AK, USA, 2023, pp. 1-6, doi: 10.1109/IV55152.2023.10186610.
 import numpy as np
 
 def DynVehicleModel(state, u):
@@ -69,7 +72,7 @@ def LatTireForce(Caj, aj, Fyjmax, debug=False):
     
     tan_aj_sl = 3*Fyjmax/Caj
     tan_aj = np.tan(aj)
-    if abs(tan_aj) < tan_aj_sl:
+    if abs(tan_aj) <= tan_aj_sl:
         Fyj = -Caj*tan_aj + Caj**2*tan_aj*abs(tan_aj)/(3*Fyjmax) - Caj**3*tan_aj**3/(27*Fyjmax**2)
     else:
         if debug:
