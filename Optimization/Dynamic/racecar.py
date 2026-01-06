@@ -1,6 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import time
+import imageio.v2 as imageio
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from PIL import Image
 from SQP import SQP
 
 # Hacky way to import utilities
@@ -11,6 +14,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..',
 import utils
 from racetrack import RaceTrack
 from VehicleModel import DynVehicleModel, LatTireForce
+
+
+## SETTINGS
+save_animation = False
 
 def dyn(x, u):
     L = 3
@@ -42,19 +49,19 @@ def rollout(x0, U, dt):
 params = {
     "N": 150,
     "T": 7.5,
-    "Q": [0., 0.0, 0, 0.0, 0, 0.0],
-    "P": [0., 0.0, 0., 0.0, 0, 0.0],
-    "q": [-2., 0., 0., -0., 0., 0.],
-    "R": [0.25, 50],
+    "Q": [0., 0.0, 0, 0.0, 0, 0.0, 25, 5],
+    "P": [0., 0.0, 0., 0.0, 0, 0.0, 25, 5],
+    "q": [-200., 0., 0., -0., 0., 0., 0., 0.],
+    "R": [0.0025, 0.05],
     "max_iter": 1,
     "Hess_approx": "Newton",
-    "disc_method": "rk4",
+    "disc_method": "trapezoidal",
     "M": 1
 }
-
-nx = 6
+nxs = 6
+nx = 8
 nu = 2
-ns = 3
+ns = 1
 ne = 0
 nvar = nx + nu + ns + ne
 nv = nu*params["N"] + nx*(params["N"]+1) + ns*(params["N"]+1) + ne*(params["N"]+1) # nu, nx, ns
@@ -71,20 +78,22 @@ track = RaceTrack("circuit")
 dt = params["T"]/params["N"]#0.05
 L = 3
 
-x = np.array([[0.],[100.],[0],[10.],[0.],[0.]])
+x = np.array([[0.],[103.],[0],[10.],[0.],[0.]])
 # propagate state with assumed 0 input to obtain v0
 x0 = x.copy()
 u0 = np.zeros((2,1))
-v0[0:nx] = x0.flatten()
+v0[0:nxs] = x0.flatten()
 for k in range(1,params["N"]+1):
     x0 = sim(x0,u0)
-    v0[nvar*k : nvar*k + nx] = x0.flatten()
+    v0[nvar*k : nvar*k + nxs] = x0.flatten()
 v_opt = v0
 x1p = v_opt[0::nvar].copy()
 x2p = v_opt[1::nvar].copy()
 x3p = v_opt[2::nvar].copy()
-v_opt[1::nvar] = 0
+v_opt[0::nvar] /= 100.
+v_opt[1::nvar] = 3
 v_opt[2::nvar] = 0
+v_opt[3::nvar] /= 20.
 mu = np.zeros_like(sqp.gmin)
 X = [x]
 Xr = []
@@ -106,20 +115,20 @@ idx0 = 0
 T = []
 
 # Prepare plots
-# fig, ax = plt.subplots()
 fig = plt.figure(figsize=(10, 5))
 gs = plt.GridSpec(4, 6, figure=fig)
 ax_main = fig.add_subplot(gs[:, :4])
 ax_bicycle = fig.add_subplot(gs[:, 4])
 ax_front_circle = fig.add_subplot(gs[0:2, 5])  # top right
 ax_rear_circle = fig.add_subplot(gs[2:4, 5])   # bottom right
+agg_canvas = FigureCanvasAgg(fig)
 # ax.set_aspect('equal')
 vehicle_artist = None
 trajectory_artist = None
 tire_artists = None
 arrow_artists = None
 utils.draw_track(track.track, 6, ax=ax_main)
-
+frames_filenames = []
 for step in range(450*2):
     t = step*dt
 
@@ -129,26 +138,30 @@ for step in range(450*2):
     xref = utils.get_ref_race_frenet(xx, params["N"]+1, track.track, idx0)
 
     t1 = time.perf_counter()
-    v_opt, solved, mu, x_ref = sqp.solve(x, v_opt, mu, xref)
+    u, v_opt, solved, mu, x_ref = sqp.solve(x, v_opt, mu, xref)
     t2 = time.perf_counter()
     
     # Save trajectories for visualization
-    u1p = v_opt[nx + ns + ne::nvar]
-    u2p = v_opt[nx + ns + ne + 1::nvar]
-    u = np.array(v_opt[nx+ns+ne : nx+ns+ne+nu])
-
-    # Simulate race car
-    x = sim(x, u, dt, M=4)
+    u1p = v_opt[nx - 2::nvar]
+    u2p = v_opt[nx - 1::nvar]
+    # u = np.array(v_opt[nvar+6:nvar+8])
 
     # Prediction from SQP is in Frenet frame
     # Convert to xy
-    sp = v_opt[0::nvar]
+    sp = v_opt[0::nvar]*100.
     dp = v_opt[1::nvar]
     thp = v_opt[2::nvar]
     Xp = utils.get_traj_xy(sp, dp, thp, track.track, x)
-    # up = np.concat((u1p, u2p),axis=1).T
-    # Xp = rollout(x, up, dt)
 
+    xx  = x[0][0]
+    yx  = x[1][0]
+    thx = x[2][0]
+    vxx = x[3][0]
+    vyx = x[4][0]
+    rx  = x[5][0]
+
+    # Simulate race car
+    x = sim(x, u, dt, M=4)
 
     x1p = Xp[0,:]
     x2p = Xp[1,:]
@@ -179,15 +192,11 @@ for step in range(450*2):
 
     SOLVED += [solved]
 
-    xx  = x[0][0]
-    yx  = x[1][0]
-    thx = x[2][0]
-    vxx = x[3][0]
-    vyx = x[4][0]
-    rx  = x[5][0]
+
+    ### ANIMATION
+    # Calculate tire forces for animation
     Fx = u[0][0]
     delta = u[1][0]
-    # Assume no load transfer
     Fzf = sqp.m*sqp.lr*sqp.g/sqp.L
     Fzr = sqp.m*sqp.lf*sqp.g/sqp.L
 
@@ -216,11 +225,30 @@ for step in range(450*2):
                           Fx_front=Fxf, Fy_front=Fyf, Fx_rear=Fxr, Fy_rear=Fyr, F_maxf=sqp.muf*Fzf, F_maxr=sqp.mur*Fzr,
                           ax_front_circle=ax_front_circle, ax_rear_circle=ax_rear_circle)
 
-    plt.pause(0.0001)  # brief pause for animation
-    if xref[5,0] >= track.track[-5,4]:
+    if save_animation:
+        # --- save frame as PNG ---
+        filename = f"frames/frame_{step:03d}.png"
+        fig.savefig(filename, dpi=150)
+        frames_filenames.append(filename)
+
+        plt.pause(0.0001)  # brief pause for animation
+
+    ## LAP END CONDITION
+    if xref[5,2] >= track.track[-2,4]:
         print("FINISHED! Lap time: ", dt*step)
         break
 
+# --- combine PNGs into GIF ---
+if save_animation:
+    images = []
+    target_size = (1000, 500)  # width, height in pixels, fixed figure size
+
+    for filename in frames_filenames:
+        img = Image.open(filename)
+        img = img.resize(target_size)  # force same dimensions
+        images.append(np.array(img))
+
+    imageio.mimsave("trajectory2.gif", images, fps=int(1/dt), loop=0)
 
 print("max time: ", max(T))
 print("mean time: ", np.mean(T))
@@ -252,7 +280,7 @@ u1_opt = U[:, 0]
 u2_opt = U[:, 1]
 
 
-#%% Plots
+#%% PLOTS
 legend_loc = 'upper right'
 t1 = dt*np.arange(step+1)
 t2 = dt*np.arange(step+2)
@@ -263,7 +291,7 @@ plt.clf()
 ax1 = plt.gca()
 utils.draw_track(track.track, 6)
 utils.plot_colored_line(x1_opt, x2_opt, x4_opt.squeeze(), cmap='viridis', ax=ax1)
-plt.title("Gauss-Newton SQP")
+plt.title("Newton SQP")
 plt.axis('equal')
 plt.xlim(-80, 100)
 plt.ylim(-5, 105)
@@ -276,8 +304,6 @@ ax2.plot(t1, xf[:,1], label='d')
 ax2.plot([t1[0],t1[-1]],[-3, -3],'r--',linewidth=1)
 ax2.plot([t1[0],t1[-1]],[ 3,  3],'r--',linewidth=1)
 ax3.plot(t1, Alat, label='a_lat')
-ax3.plot([t1[0],t1[-1]],[-3, -3],'r--',linewidth=1)
-ax3.plot([t1[0],t1[-1]],[ 3,  3],'r--',linewidth=1)
 ax4.plot(t1, SOLVED, label='solved')
 for ax in (ax1, ax2, ax3, ax4):
     ax.legend(loc=legend_loc)
@@ -288,7 +314,7 @@ for ax in (ax1, ax2, ax3, ax4):
 fig, (ax1, ax2) = plt.subplots(2, 1, num=3, sharex=True)
 fig.suptitle("control inputs")
 ax1.plot(t1, u1_opt, label='acceleration')
-ax1.plot([t1[0],t1[-1]],[-5000, -5000],'r--',linewidth=1)
+ax1.plot([t1[0],t1[-1]],[-7500, -7500],'r--',linewidth=1)
 ax1.plot([t1[0],t1[-1]],[ 5000,  5000],'r--',linewidth=1)
 ax1.grid(True)
 ax1.legend(loc=legend_loc)

@@ -118,10 +118,14 @@ for step in range(675):
     # Prediction from SQP is in Frenet frame
     # Calculate x,y,theta by rolling out input trajectory
     # (alternatively could be done geometrically)
+    sp = v_opt[0::nvar]
+    dp = v_opt[1::nvar]
+    thp = v_opt[2::nvar]
+    Xp = utils.get_traj_xy(sp, dp, thp, track.track, x)
     u1p = v_opt[nx + ns::nvar]
     u2p = v_opt[nx + ns + 1::nvar]
-    up = np.concat((u1p, u2p),axis=1).T
-    Xp = rollout(x, up, dt)
+    # up = np.concat((u1p, u2p),axis=1).T
+    # Xp = rollout(x, up, dt)
     x1p = Xp[0,:]
     x2p = Xp[1,:]
     x3p = Xp[2,:]
