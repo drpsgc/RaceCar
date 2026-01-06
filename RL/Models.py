@@ -32,7 +32,7 @@ class Actor(nn.Module):
         
     def forward(self, state):
         x = self.layers(state)
-        mu = torch.tanh(self.mu(x))
+        mu = self.mu(x)#torch.tanh(self.mu(x))
         logstd = self.log_std(x)
         logstd = torch.clamp(logstd, self.min_std, self.max_std)
         std = torch.exp(logstd)

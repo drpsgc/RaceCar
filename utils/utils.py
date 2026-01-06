@@ -156,28 +156,40 @@ def get_traj_xy(s, d, th, track, x):
 
 def draw_track(track, w, ax=None):
     """
-    Draw track centerline and boundaries.
-    track: array of shape (N, 3) [x, y, heading]
+    Draw or update a track using persistent Line2D artists.
+    track: (N,3) array -> x, y, heading
     w: track width
-    ax: optional matplotlib axis
     """
     if ax is None:
         ax = plt.gca()
 
-    left = np.zeros((track.shape[0], 2))
-    right = np.zeros((track.shape[0], 2))
-    for i in range(track.shape[0]):
-        normal = np.array([
-            np.cos(track[i, 2] + np.pi / 2),
-            np.sin(track[i, 2] + np.pi / 2)
-        ])
-        left[i, :] = track[i, 0:2] + w / 2 * normal
-        right[i, :] = track[i, 0:2] - w / 2 * normal
+    # Allocate artist storage on axis if not present
+    if not hasattr(ax, "_track_artists"):
+        ax._track_artists = {}
 
-    ax.plot(track[:, 0], track[:, 1], 'k', linewidth=1)
-    ax.plot(left[:, 0], left[:, 1], 'r--', linewidth=0.8)
-    ax.plot(right[:, 0], right[:, 1], 'r--', linewidth=0.8)
-    ax.set_aspect('equal')
+    # Compute boundaries
+    normals = np.c_[np.cos(track[:,2] + np.pi/2), 
+                    np.sin(track[:,2] + np.pi/2)]
+    left  = track[:, :2] + (w/2) * normals
+    right = track[:, :2] - (w/2) * normals
+
+    # If artists already exist → update them
+    if "center" in ax._track_artists:
+        ax._track_artists["center"].set_data(track[:,0],  track[:,1])
+        ax._track_artists["left"].set_data(left[:,0],   left[:,1])
+        ax._track_artists["right"].set_data(right[:,0], right[:,1])
+    else:
+        # Create artists once
+        center, = ax.plot(track[:,0], track[:,1], 'k',   lw=1)
+        left_l ,= ax.plot(left[:,0],   left[:,1], 'r--', lw=0.8)
+        right_l,= ax.plot(right[:,0],  right[:,1], 'r--', lw=0.8)
+
+        ax._track_artists["center"] = center
+        ax._track_artists["left"]   = left_l
+        ax._track_artists["right"]  = right_l
+
+    ax.set_aspect("equal")
+    ax.figure.canvas.draw_idle()
 
 
 def draw_vehicle_and_trajectory(ax, x, y, heading, future_states,
@@ -339,7 +351,7 @@ def draw_friction_circle(ax, Fx, Fy, F_max, title=False):
     ax.plot([Fy], [Fx],'o')
     # ax.arrow(0, 0, Fx, Fy)#, head_width=0.05*F_max, head_length=0.1*F_max, fc='r', ec='r', zorder=10)
 
-def plot_colored_line(x, y, c, cmap='RdYlGn_r', linewidth=2, colorbar_label='Value', ax=None):
+def plot_colored_line(x, y, c, cmap='RdYlGn_r', linewidth=2, colorbar_label='Speed', ax=None):
     """
     Plot a 2D line (x, y) whose color varies according to a third variable c.
 
